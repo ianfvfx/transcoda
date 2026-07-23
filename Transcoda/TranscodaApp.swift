@@ -50,7 +50,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.center()
-        window.title = "Transcoda"
+        window.title = "Transcoda v\(AppVersion.current)"
         window.contentView = NSHostingView(rootView: contentView)
         window.minSize = NSSize(width: 580, height: 520)
         window.makeKeyAndOrderFront(nil)

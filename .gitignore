@@ -1,0 +1,15 @@
+# Xcode
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+.DS_Store
+
+# Build products
+build/
+DerivedData/
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.build/
+.swiftpm/

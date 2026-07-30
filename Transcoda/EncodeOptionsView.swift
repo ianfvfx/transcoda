@@ -293,22 +293,61 @@ struct EncodeOptionsView: View {
 
     // MARK: - Output section
 
+    private enum OutputLocation: Hashable {
+        case sameAsSource, downloads, desktop, other
+    }
+
+    private var downloadsURL: URL {
+        FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+    }
+
+    private var desktopURL: URL {
+        FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
+    }
+
+    private var selectedLocation: OutputLocation {
+        guard useCustomOutput, let dir = outputDirectory else { return .sameAsSource }
+        let path = dir.standardizedFileURL.path
+        if path == downloadsURL.standardizedFileURL.path { return .downloads }
+        if path == desktopURL.standardizedFileURL.path { return .desktop }
+        return .other
+    }
+
+    private func selectLocation(_ location: OutputLocation) {
+        switch location {
+        case .sameAsSource:
+            useCustomOutput = false
+            outputDirectory = nil
+        case .downloads:
+            useCustomOutput = true
+            outputDirectory = downloadsURL
+        case .desktop:
+            useCustomOutput = true
+            outputDirectory = desktopURL
+        case .other:
+            useCustomOutput = true
+        }
+    }
+
+    private func locationToggle(_ label: String, _ location: OutputLocation) -> some View {
+        Toggle(label, isOn: Binding(
+            get: { selectedLocation == location },
+            set: { isOn in if isOn { selectLocation(location) } }
+        ))
+        .toggleStyle(.checkbox)
+        .font(.callout)
+    }
+
     private var outputSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             columnHeader("Output")
 
-            // Folder toggle + picker
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text("Folder")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Toggle("Same as source", isOn: Binding(
-                        get: { !useCustomOutput },
-                        set: { useCustomOutput = !$0 }
-                    ))
-                    .toggleStyle(.checkbox)
-                    .font(.callout)
+                HStack(spacing: 16) {
+                    locationToggle("Same as Source", .sameAsSource)
+                    locationToggle("Downloads", .downloads)
+                    locationToggle("Desktop", .desktop)
+                    locationToggle("Other", .other)
                 }
 
                 if useCustomOutput {
@@ -318,9 +357,11 @@ struct EncodeOptionsView: View {
                             .foregroundStyle(outputDirectory == nil ? .red : .secondary)
                             .lineLimit(1)
                             .truncationMode(.head)
-                        Button("Choose…") { chooseFolder() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                        if selectedLocation == .other {
+                            Button("Choose…") { chooseFolder() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
                     }
                 }
             }

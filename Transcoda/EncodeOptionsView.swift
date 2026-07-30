@@ -306,7 +306,11 @@ struct EncodeOptionsView: View {
     }
 
     private var selectedLocation: OutputLocation {
-        guard useCustomOutput, let dir = outputDirectory else { return .sameAsSource }
+        guard useCustomOutput else { return .sameAsSource }
+        // "Other" selected but no folder chosen yet still counts as .other, not
+        // .sameAsSource — otherwise the checkbox immediately un-checks itself and
+        // the Choose… button (gated on .other) never appears.
+        guard let dir = outputDirectory else { return .other }
         let path = dir.standardizedFileURL.path
         if path == downloadsURL.standardizedFileURL.path { return .downloads }
         if path == desktopURL.standardizedFileURL.path { return .desktop }

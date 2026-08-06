@@ -32,7 +32,7 @@ enum BuiltInPresets {
             resolution: .source,
             framerate: .source,
             scan: .autoDetect,
-            bitrateMbps: StructuredSettings.defaultH264BitrateMbps,
+            bitrateMbps: "15",
             audioCodec: .aac,
             audioBitrate: .k192,
             proResCodec: .hq422,

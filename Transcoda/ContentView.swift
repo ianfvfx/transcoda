@@ -21,20 +21,55 @@ struct ContentView: View {
         !queue.jobs.isEmpty &&
         queue.jobs.contains(where: { $0.status == .waiting }) &&
         optionsValid &&
-        collidingJobs.isEmpty
+        collidingJobs.isEmpty &&
+        pendingDurationJobs.isEmpty
     }
 
     private var optionsValid: Bool {
         if case .structured(let settings) = workingPreset.kind, settings.codecFamily == .h264Mp4 {
-            // Blank is fine — PresetConfig falls back to the default bitrate.
-            // Anything entered must still be a valid positive number, though.
-            let trimmed = settings.bitrateMbps.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty {
-                guard let v = Int(trimmed), v > 0 else { return false }
+            let maxSize = settings.maxFileSizeMB.trimmingCharacters(in: .whitespaces)
+            if !maxSize.isEmpty {
+                // Max File Size active — it supersedes bitrateMbps entirely, so
+                // only maxFileSizeMB itself needs to be a valid positive number.
+                guard let v = Double(maxSize), v > 0 else { return false }
+            } else {
+                // Blank bitrate is fine — PresetConfig falls back to the default.
+                // Anything entered must still be a valid positive number, though.
+                let trimmed = settings.bitrateMbps.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty {
+                    guard let v = Int(trimmed), v > 0 else { return false }
+                }
             }
         }
         if useCustomOutput && outputDirectory == nil { return false }
         return true
+    }
+
+    private var maxSizeModeActive: Bool {
+        if case .structured(let settings) = workingPreset.kind {
+            return !settings.maxFileSizeMB.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        return false
+    }
+
+    // Max File Size needs each file's own duration to calculate its bitrate —
+    // ffprobe runs asynchronously right when a file is queued, so this can be
+    // briefly non-empty for a file added moments ago. Encode waits it out
+    // rather than risk stamping a job with the wrong (or no) bitrate.
+    private var pendingDurationJobs: [EncodingJob] {
+        guard maxSizeModeActive else { return [] }
+        return queue.jobs.filter { $0.status == .waiting && $0.sourceDurationSeconds == nil }
+    }
+
+    // Waiting jobs whose calculated bitrate would hit the floor — i.e. the
+    // target size is unrealistically small for that file's length.
+    private var maxSizeFloorJobs: [EncodingJob] {
+        guard maxSizeModeActive, case .structured(let settings) = workingPreset.kind else { return [] }
+        return queue.jobs.filter { job in
+            guard job.status == .waiting, let duration = job.sourceDurationSeconds else { return false }
+            let effectiveDur = PresetConfig.effectiveDuration(for: workingPreset, sourceDuration: duration)
+            return PresetConfig.calculatedBitrateMbps(settings: settings, effectiveDurationSeconds: effectiveDur)?.hitFloor == true
+        }
     }
 
     // Jobs whose resolved output path would equal their input path under the
@@ -65,7 +100,8 @@ struct ContentView: View {
     // encoding starts, and duration is fetched asynchronously when queued).
     private func estimatedOutputBytes(for job: EncodingJob) -> Int64? {
         guard job.status == .waiting, let duration = job.sourceDurationSeconds else { return nil }
-        return PresetConfig.estimatedOutputBytes(preset: workingPreset, sourceDurationSeconds: duration)
+        let effective = PresetConfig.effectivePreset(for: workingPreset, sourceDurationSeconds: duration)
+        return PresetConfig.estimatedOutputBytes(preset: effective, sourceDurationSeconds: duration)
     }
 
     var body: some View {
@@ -139,6 +175,28 @@ struct ContentView: View {
                 Divider()
                 Label(
                     "Output would overwrite \(collidingJobs.count) input file\(collidingJobs.count == 1 ? "" : "s") — add a suffix, filename, or choose a different output folder.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            }
+
+            if !pendingDurationJobs.isEmpty {
+                Divider()
+                Label(
+                    "Waiting for file info on \(pendingDurationJobs.count) file\(pendingDurationJobs.count == 1 ? "" : "s") before Max File Size can calculate a bitrate…",
+                    systemImage: "clock"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            } else if !maxSizeFloorJobs.isEmpty {
+                Divider()
+                Label(
+                    "\(maxSizeFloorJobs.count) file\(maxSizeFloorJobs.count == 1 ? "" : "s") too long for this target size — bitrate floored to \(String(format: "%.1f", PresetConfig.minimumCalculatedMbps)) Mbps, quality may suffer.",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.caption)

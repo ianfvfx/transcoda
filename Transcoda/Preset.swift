@@ -37,6 +37,12 @@ struct StructuredSettings: Codable, Equatable {
     // encoding (-ss <value> before -i). Blank/invalid means no trim.
     var trimStartSeconds: String = ""
 
+    // h264Mp4 only. If set to a valid positive number (MB), bitrateMbps is
+    // superseded — the actual encode bitrate is calculated per file from this
+    // target size and each file's own duration. Blank/invalid means unused
+    // (manual bitrateMbps applies as normal). See PresetConfig.effectivePreset.
+    var maxFileSizeMB: String = ""
+
     // Used both as the Bitrate field's placeholder and as the actual fallback
     // value when the field is left blank — see PresetConfig.effectiveBitrateMbps.
     static let defaultH264BitrateMbps = "18"

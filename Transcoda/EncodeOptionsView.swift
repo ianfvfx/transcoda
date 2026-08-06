@@ -194,8 +194,18 @@ struct EncodeOptionsView: View {
                         TextField(StructuredSettings.defaultH264BitrateMbps, text: settings.bitrateMbps)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 55)
+                            .disabled(!settings.wrappedValue.maxFileSizeMB.trimmingCharacters(in: .whitespaces).isEmpty)
                         Text("Mbps").foregroundStyle(.secondary).font(.callout)
                     }
+                }
+                optionRow("Max Size") {
+                    HStack(spacing: 4) {
+                        TextField("", text: settings.maxFileSizeMB)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 55)
+                        Text("MB").foregroundStyle(.secondary).font(.callout)
+                    }
+                    .help("If set, calculates each file's bitrate independently to target this size, and disables the Bitrate field above.")
                 }
                 optionRow("Scan") {
                     Picker("", selection: settings.scan) {

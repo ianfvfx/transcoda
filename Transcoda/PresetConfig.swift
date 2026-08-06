@@ -141,6 +141,19 @@ enum PresetConfig {
         return trimmed.isEmpty ? StructuredSettings.defaultH264BitrateMbps : trimmed
     }
 
+    // Shared by estimatedOutputBytes and calculatedBitrateMbps so the audio
+    // portion of the size budget is computed identically in both directions.
+    private static func audioBitsPerSecond(for settings: StructuredSettings) -> Double {
+        switch settings.audioCodec {
+        case .aac:
+            return (Double(settings.audioBitrate.rawValue) ?? 0) * 1000
+        case .pcm:
+            // Matches AudioCodec.pcm's hardcoded pcm_s24le, stereo.
+            let sampleRate = Double(settings.audioSampleRate.rawValue) ?? 48000
+            return sampleRate * 24 * 2
+        }
+    }
+
     // MARK: - Estimated output size
     //
     // Only meaningful for the H.264/MP4 structured family, since it's the one
@@ -155,19 +168,62 @@ enum PresetConfig {
 
         let duration = effectiveDuration(for: preset, sourceDuration: sourceDurationSeconds)
         let videoBitsPerSecond = videoMbps * 1_000_000
-
-        let audioBitsPerSecond: Double
-        switch settings.audioCodec {
-        case .aac:
-            audioBitsPerSecond = (Double(settings.audioBitrate.rawValue) ?? 0) * 1000
-        case .pcm:
-            // Matches AudioCodec.pcm's hardcoded pcm_s24le, stereo.
-            let sampleRate = Double(settings.audioSampleRate.rawValue) ?? 48000
-            audioBitsPerSecond = sampleRate * 24 * 2
-        }
-
-        let totalBitsPerSecond = videoBitsPerSecond + audioBitsPerSecond
+        let totalBitsPerSecond = videoBitsPerSecond + audioBitsPerSecond(for: settings)
         return Int64((totalBitsPerSecond * duration) / 8.0)
+    }
+
+    // MARK: - Max File Size → calculated bitrate
+    //
+    // The reverse of estimatedOutputBytes: given a target file size, solve for
+    // the video bitrate that would produce it. A 2% margin keeps real output
+    // safely under the target rather than exactly at it, absorbing container
+    // overhead and any residual encoder rounding. `mbps` is floored to 1
+    // decimal place and never goes below `minimumMbps` — if the math would put
+    // it below that floor (a target size too small for the file's length),
+    // `hitFloor` is true so the UI can warn rather than silently produce a
+    // likely-unusable file.
+    struct MaxSizeBitrateResult {
+        let mbps: Double
+        let hitFloor: Bool
+    }
+
+    private static let maxSizeMarginFactor = 0.98
+    static let minimumCalculatedMbps = 1.0
+
+    static func calculatedBitrateMbps(settings: StructuredSettings, effectiveDurationSeconds: Double) -> MaxSizeBitrateResult? {
+        let trimmed = settings.maxFileSizeMB.trimmingCharacters(in: .whitespaces)
+        guard let maxSizeMB = Double(trimmed), maxSizeMB > 0, effectiveDurationSeconds > 0 else { return nil }
+
+        let targetBytes = maxSizeMB * 1_000_000 * maxSizeMarginFactor
+        let totalBitsPerSecond = (targetBytes * 8) / effectiveDurationSeconds
+        let videoBitsPerSecond = totalBitsPerSecond - audioBitsPerSecond(for: settings)
+        let rawMbps = videoBitsPerSecond / 1_000_000
+        let flooredMbps = (rawMbps * 10).rounded(.down) / 10
+
+        if flooredMbps < minimumCalculatedMbps {
+            return MaxSizeBitrateResult(mbps: minimumCalculatedMbps, hitFloor: true)
+        }
+        return MaxSizeBitrateResult(mbps: flooredMbps, hitFloor: false)
+    }
+
+    // Substitutes a per-file calculated bitrate into a copy of `preset` when
+    // Max File Size is active, using `sourceDurationSeconds` (that specific
+    // file's own duration) — this is what makes files of different lengths in
+    // the same queue each get an independently correct bitrate. Returns
+    // `preset` unchanged for anything Max File Size doesn't apply to (ProRes,
+    // advanced presets, blank Max Size field, or an unknown duration).
+    static func effectivePreset(for preset: Preset, sourceDurationSeconds: Double?) -> Preset {
+        guard case .structured(var settings) = preset.kind, settings.codecFamily == .h264Mp4 else { return preset }
+        guard !settings.maxFileSizeMB.trimmingCharacters(in: .whitespaces).isEmpty else { return preset }
+        guard let sourceDurationSeconds else { return preset }
+
+        let effectiveDur = effectiveDuration(for: preset, sourceDuration: sourceDurationSeconds)
+        guard let result = calculatedBitrateMbps(settings: settings, effectiveDurationSeconds: effectiveDur) else { return preset }
+
+        settings.bitrateMbps = String(format: "%.1f", result.mbps)
+        var newPreset = preset
+        newPreset.kind = .structured(settings)
+        return newPreset
     }
 
     // MARK: - Unified argument builder
@@ -227,7 +283,16 @@ enum PresetConfig {
             // regular, which true CBR's padding model assumes.
             // -preset veryfast trades some compression efficiency for much faster
             // encodes than the unset default ("medium").
-            let br = effectiveBitrateMbps(settings.bitrateMbps) + "M"
+            //
+            // When Max File Size is active, the real per-file bitrate is only
+            // known once a specific file's duration is available — EncodingQueue
+            // substitutes the calculated value into bitrateMbps before stamping
+            // a job (see PresetConfig.effectivePreset), so by the time a REAL
+            // encode reaches here, bitrateMbps already holds that number. Only
+            // the preview (inputURL == nil, no specific file in play) needs the
+            // placeholder.
+            let isMaxSizePreview = inputURL == nil && !settings.maxFileSizeMB.trimmingCharacters(in: .whitespaces).isEmpty
+            let br = isMaxSizePreview ? "<calculated>" : effectiveBitrateMbps(settings.bitrateMbps) + "M"
             args += [
                 "-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high", "-level:v", "4.1",
                 "-b:v", br, "-maxrate", br, "-bufsize", br,

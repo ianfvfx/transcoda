@@ -76,7 +76,9 @@ class EncodingQueue: ObservableObject {
         guard !isRunning else { return }
 
         for job in jobs where job.status == .waiting {
-            job.preset          = preset
+            // Substitutes a per-file calculated bitrate when Max File Size is
+            // active, using this job's own duration — a no-op otherwise.
+            job.preset          = PresetConfig.effectivePreset(for: preset, sourceDurationSeconds: job.sourceDurationSeconds)
             job.outputDirectory = outputDirectory
             job.customFileName  = outputFileName
             job.customSuffix    = outputSuffix

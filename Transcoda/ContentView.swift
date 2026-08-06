@@ -61,14 +61,15 @@ struct ContentView: View {
         return queue.jobs.filter { $0.status == .waiting && $0.sourceDurationSeconds == nil }
     }
 
-    // Waiting jobs whose calculated bitrate would hit the floor — i.e. the
-    // target size is unrealistically small for that file's length.
-    private var maxSizeFloorJobs: [EncodingJob] {
+    // Waiting jobs whose calculated bitrate falls below the recommended
+    // minimum — i.e. the target size is unrealistically small for that file's
+    // length. Still honored as calculated, just flagged for a quality warning.
+    private var belowMinimumBitrateJobs: [EncodingJob] {
         guard maxSizeModeActive, case .structured(let settings) = workingPreset.kind else { return [] }
         return queue.jobs.filter { job in
             guard job.status == .waiting, let duration = job.sourceDurationSeconds else { return false }
             let effectiveDur = PresetConfig.effectiveDuration(for: workingPreset, sourceDuration: duration)
-            return PresetConfig.calculatedBitrateMbps(settings: settings, effectiveDurationSeconds: effectiveDur)?.hitFloor == true
+            return PresetConfig.calculatedBitrateMbps(settings: settings, effectiveDurationSeconds: effectiveDur)?.belowRecommendedMinimum == true
         }
     }
 
@@ -193,10 +194,10 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
-            } else if !maxSizeFloorJobs.isEmpty {
+            } else if !belowMinimumBitrateJobs.isEmpty {
                 Divider()
                 Label(
-                    "\(maxSizeFloorJobs.count) file\(maxSizeFloorJobs.count == 1 ? "" : "s") too long for this target size — bitrate floored to \(String(format: "%.1f", PresetConfig.minimumCalculatedMbps)) Mbps, quality may suffer.",
+                    "\(belowMinimumBitrateJobs.count) file\(belowMinimumBitrateJobs.count == 1 ? "" : "s") require a bitrate below \(String(format: "%.1f", PresetConfig.recommendedMinimumMbps)) Mbps to hit this target — quality may suffer.",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.caption)

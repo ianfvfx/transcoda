@@ -178,17 +178,19 @@ enum PresetConfig {
     // the video bitrate that would produce it. A 2% margin keeps real output
     // safely under the target rather than exactly at it, absorbing container
     // overhead and any residual encoder rounding. `mbps` is floored to 1
-    // decimal place and never goes below `minimumMbps` — if the math would put
-    // it below that floor (a target size too small for the file's length),
-    // `hitFloor` is true so the UI can warn rather than silently produce a
-    // likely-unusable file.
+    // decimal place. No enforced floor beyond `absoluteMinimumMbps` (a purely
+    // technical safety net so -b:v is never zero/negative, which ffmpeg would
+    // reject outright) — a target size too small for the file's length is
+    // still honored as calculated; `belowRecommendedMinimum` just flags it so
+    // the UI can warn that quality may suffer, rather than silently clamping.
     struct MaxSizeBitrateResult {
         let mbps: Double
-        let hitFloor: Bool
+        let belowRecommendedMinimum: Bool
     }
 
     private static let maxSizeMarginFactor = 0.98
-    static let minimumCalculatedMbps = 1.0
+    static let recommendedMinimumMbps = 1.0
+    private static let absoluteMinimumMbps = 0.1
 
     static func calculatedBitrateMbps(settings: StructuredSettings, effectiveDurationSeconds: Double) -> MaxSizeBitrateResult? {
         let trimmed = settings.maxFileSizeMB.trimmingCharacters(in: .whitespaces)
@@ -200,10 +202,8 @@ enum PresetConfig {
         let rawMbps = videoBitsPerSecond / 1_000_000
         let flooredMbps = (rawMbps * 10).rounded(.down) / 10
 
-        if flooredMbps < minimumCalculatedMbps {
-            return MaxSizeBitrateResult(mbps: minimumCalculatedMbps, hitFloor: true)
-        }
-        return MaxSizeBitrateResult(mbps: flooredMbps, hitFloor: false)
+        let mbps = max(flooredMbps, absoluteMinimumMbps)
+        return MaxSizeBitrateResult(mbps: mbps, belowRecommendedMinimum: mbps < recommendedMinimumMbps)
     }
 
     // Substitutes a per-file calculated bitrate into a copy of `preset` when

@@ -177,12 +177,14 @@ enum PresetConfig {
     // The reverse of estimatedOutputBytes: given a target file size, solve for
     // the video bitrate that would produce it. A 2% margin keeps real output
     // safely under the target rather than exactly at it, absorbing container
-    // overhead and any residual encoder rounding. `mbps` is floored to 1
-    // decimal place. No enforced floor beyond `absoluteMinimumMbps` (a purely
-    // technical safety net so -b:v is never zero/negative, which ffmpeg would
-    // reject outright) — a target size too small for the file's length is
-    // still honored as calculated; `belowRecommendedMinimum` just flags it so
-    // the UI can warn that quality may suffer, rather than silently clamping.
+    // overhead and any residual encoder rounding. `mbps` is floored to 2
+    // decimal places — fine enough to distinguish values below 0.1 Mbps, not
+    // just 1.0/0.1-style round numbers. No enforced floor beyond
+    // `absoluteMinimumMbps` (a purely technical safety net so -b:v is never
+    // zero/negative, which ffmpeg would reject outright) — a target size too
+    // small for the file's length is still honored as calculated;
+    // `belowRecommendedMinimum` just flags it so the UI can warn that quality
+    // may suffer, rather than silently clamping.
     struct MaxSizeBitrateResult {
         let mbps: Double
         let belowRecommendedMinimum: Bool
@@ -190,7 +192,7 @@ enum PresetConfig {
 
     private static let maxSizeMarginFactor = 0.98
     static let recommendedMinimumMbps = 1.0
-    private static let absoluteMinimumMbps = 0.1
+    private static let absoluteMinimumMbps = 0.01
 
     static func calculatedBitrateMbps(settings: StructuredSettings, effectiveDurationSeconds: Double) -> MaxSizeBitrateResult? {
         let trimmed = settings.maxFileSizeMB.trimmingCharacters(in: .whitespaces)
@@ -200,7 +202,7 @@ enum PresetConfig {
         let totalBitsPerSecond = (targetBytes * 8) / effectiveDurationSeconds
         let videoBitsPerSecond = totalBitsPerSecond - audioBitsPerSecond(for: settings)
         let rawMbps = videoBitsPerSecond / 1_000_000
-        let flooredMbps = (rawMbps * 10).rounded(.down) / 10
+        let flooredMbps = (rawMbps * 100).rounded(.down) / 100
 
         let mbps = max(flooredMbps, absoluteMinimumMbps)
         return MaxSizeBitrateResult(mbps: mbps, belowRecommendedMinimum: mbps < recommendedMinimumMbps)
@@ -220,7 +222,7 @@ enum PresetConfig {
         let effectiveDur = effectiveDuration(for: preset, sourceDuration: sourceDurationSeconds)
         guard let result = calculatedBitrateMbps(settings: settings, effectiveDurationSeconds: effectiveDur) else { return preset }
 
-        settings.bitrateMbps = String(format: "%.1f", result.mbps)
+        settings.bitrateMbps = String(format: "%.2f", result.mbps)
         var newPreset = preset
         newPreset.kind = .structured(settings)
         return newPreset

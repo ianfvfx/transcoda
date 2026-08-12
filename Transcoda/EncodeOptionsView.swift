@@ -495,9 +495,23 @@ struct EncodeOptionsView: View {
         }
     }
 
+    // If a suffix is currently typed in the Output section (overriding the
+    // preset's own default for this session), saving bakes it in as the
+    // preset's new default going forward — same role Clearcast MP4's built-in
+    // "_CC" plays. Falls back to the preset's existing suffix when the live
+    // field is blank, so saving without touching it doesn't erase anything.
+    private var suffixToPersist: String {
+        let live = outputSuffix.trimmingCharacters(in: .whitespaces)
+        return live.isEmpty ? workingPreset.outputSuffix : live
+    }
+
     private func saveCurrent() {
+        var toSave = workingPreset
+        toSave.outputSuffix = suffixToPersist
         do {
-            try presetStore.save(workingPreset)
+            try presetStore.save(toSave)
+            workingPreset = toSave
+            outputSuffix = ""   // now the preset's own default, shown via placeholder
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -516,9 +530,10 @@ struct EncodeOptionsView: View {
                 name: name,
                 kind: workingPreset.kind,
                 outputExtension: workingPreset.outputExtension,
-                outputSuffix: workingPreset.outputSuffix
+                outputSuffix: suffixToPersist
             )
             workingPreset = saved
+            outputSuffix = ""   // now the preset's own default, shown via placeholder
             showSaveAsSheet = false
         } catch {
             errorMessage = error.localizedDescription

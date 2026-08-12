@@ -34,10 +34,13 @@ struct ContentView: View {
                 guard let v = Double(maxSize), v > 0 else { return false }
             } else {
                 // Blank bitrate is fine — PresetConfig falls back to the default.
-                // Anything entered must still be a valid positive number, though.
+                // Anything entered must still be a valid positive number, though
+                // (Double, not Int — fractional Mbps like 12.5 is valid ffmpeg
+                // input and already flows through the actual encode/estimate
+                // paths unchanged; this was the only place still Int-only).
                 let trimmed = settings.bitrateMbps.trimmingCharacters(in: .whitespaces)
                 if !trimmed.isEmpty {
-                    guard let v = Int(trimmed), v > 0 else { return false }
+                    guard let v = Double(trimmed), v > 0 else { return false }
                 }
             }
         }

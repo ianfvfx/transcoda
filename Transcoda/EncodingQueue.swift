@@ -153,8 +153,22 @@ class EncodingQueue: ObservableObject {
 
             let pipe = Pipe()
             process.standardOutput = pipe
-            process.standardError  = Pipe()
-            self.currentProcess    = process
+
+            // Captured continuously (not just read once at the end) so ffmpeg
+            // never blocks trying to write to a full, undrained pipe buffer.
+            // Without this, only the bare exit code was ever shown on failure —
+            // ffmpeg's actual error text (why it failed) was silently discarded.
+            let stderrPipe = Pipe()
+            process.standardError = stderrPipe
+            let stderrQueue = DispatchQueue(label: "com.transcoda.stderr-capture")
+            var stderrOutput = ""
+            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+                stderrQueue.sync { stderrOutput += text }
+            }
+
+            self.currentProcess = process
 
             let startTime = Date()
             pipe.fileHandleForReading.readabilityHandler = { handle in
@@ -172,17 +186,31 @@ class EncodingQueue: ObservableObject {
 
             process.waitUntilExit()
             pipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            let capturedStderr = stderrQueue.sync { stderrOutput }
 
             DispatchQueue.main.async {
                 if process.terminationStatus == 0 {
                     job.status   = .complete
                     job.progress = 1.0
                 } else {
-                    job.status = .failed("Exit code \(process.terminationStatus)")
+                    let tail = EncodingQueue.lastLines(capturedStderr, count: 3)
+                    job.status = .failed(tail.isEmpty ? "Exit code \(process.terminationStatus)" : tail)
                 }
                 completion()
             }
         }
+    }
+
+    // ffmpeg's stderr is often verbose (banner, codec info, warnings) — the
+    // actual fatal error is almost always among the last few lines it prints
+    // before exiting, so that's what's worth showing in a compact queue row.
+    private static func lastLines(_ text: String, count: Int) -> String {
+        let lines = text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return lines.suffix(count).joined(separator: " — ")
     }
 
     // MARK: - Progress parsing

@@ -1,6 +1,16 @@
 import Foundation
 import Combine
 
+// Decodes an array element independently — a failure is captured as `nil`
+// rather than propagated, so it can't abort decoding of the rest of the
+// array. See PresetStore.loadCustoms.
+private struct FailableDecodable<Base: Decodable>: Decodable {
+    let value: Base?
+    init(from decoder: Decoder) throws {
+        value = try? Base(from: decoder)
+    }
+}
+
 enum PresetStoreError: LocalizedError {
     case cannotOverwriteBuiltIn
     case cannotDeleteBuiltIn
@@ -113,9 +123,17 @@ final class PresetStore: ObservableObject {
 
     // MARK: - Persistence
 
+    // Decodes the array via FailableDecodable so one incompatible/corrupt
+    // preset only loses itself, not every other saved preset — a plain
+    // `[Preset].self` decode fails atomically: a single bad element throws
+    // and the whole array (and every valid preset in it) is lost.
     private func loadCustoms() {
         guard let data = try? Data(contentsOf: customsIndexFile) else { return }
-        guard let decoded = try? PropertyListDecoder().decode([Preset].self, from: data) else { return }
+        guard let wrapped = try? PropertyListDecoder().decode([FailableDecodable<Preset>].self, from: data) else { return }
+        let decoded = wrapped.compactMap(\.value)
+        if decoded.count != wrapped.count {
+            print("PresetStore: skipped \(wrapped.count - decoded.count) preset(s) that failed to decode.")
+        }
         customs = decoded
     }
 

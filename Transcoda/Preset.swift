@@ -60,6 +60,65 @@ struct StructuredSettings: Codable, Equatable {
     // clears it.
     var customFramerate: String = ""
 
+    // Explicit memberwise init — required once a custom init(from:) exists
+    // below, since Swift only auto-generates the memberwise initializer when
+    // no other initializer is present. Keeps every existing call site (which
+    // omits the trailing string fields, relying on their defaults) working
+    // unchanged.
+    init(codecFamily: CodecFamily, resolution: Resolution, framerate: FrameRate, scan: ScanType,
+         bitrateMbps: String, audioCodec: AudioCodec, audioBitrate: AudioBitrate,
+         proResCodec: ProResCodec, audioSampleSize: AudioSampleSize, audioSampleRate: SampleRate,
+         trimStartSeconds: String = "", maxFileSizeMB: String = "",
+         customWidth: String = "", customHeight: String = "", customFramerate: String = "") {
+        self.codecFamily = codecFamily
+        self.resolution = resolution
+        self.framerate = framerate
+        self.scan = scan
+        self.bitrateMbps = bitrateMbps
+        self.audioCodec = audioCodec
+        self.audioBitrate = audioBitrate
+        self.proResCodec = proResCodec
+        self.audioSampleSize = audioSampleSize
+        self.audioSampleRate = audioSampleRate
+        self.trimStartSeconds = trimStartSeconds
+        self.maxFileSizeMB = maxFileSizeMB
+        self.customWidth = customWidth
+        self.customHeight = customHeight
+        self.customFramerate = customFramerate
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case codecFamily, resolution, framerate, scan, bitrateMbps, audioCodec, audioBitrate
+        case proResCodec, audioSampleSize, audioSampleRate
+        case trimStartSeconds, maxFileSizeMB, customWidth, customHeight, customFramerate
+    }
+
+    // Custom decoder: the first 10 fields have been there since presets became
+    // saveable, so they're required as normal. Everything after was added in
+    // a later version — a preset saved before that field existed simply won't
+    // have the key, which is expected (not corrupt data), so decodeIfPresent
+    // falls back to the same default the property declares, rather than
+    // failing the whole decode with keyNotFound.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        codecFamily     = try container.decode(CodecFamily.self, forKey: .codecFamily)
+        resolution      = try container.decode(Resolution.self, forKey: .resolution)
+        framerate       = try container.decode(FrameRate.self, forKey: .framerate)
+        scan            = try container.decode(ScanType.self, forKey: .scan)
+        bitrateMbps     = try container.decode(String.self, forKey: .bitrateMbps)
+        audioCodec      = try container.decode(AudioCodec.self, forKey: .audioCodec)
+        audioBitrate    = try container.decode(AudioBitrate.self, forKey: .audioBitrate)
+        proResCodec     = try container.decode(ProResCodec.self, forKey: .proResCodec)
+        audioSampleSize = try container.decode(AudioSampleSize.self, forKey: .audioSampleSize)
+        audioSampleRate = try container.decode(SampleRate.self, forKey: .audioSampleRate)
+
+        trimStartSeconds = try container.decodeIfPresent(String.self, forKey: .trimStartSeconds) ?? ""
+        maxFileSizeMB    = try container.decodeIfPresent(String.self, forKey: .maxFileSizeMB) ?? ""
+        customWidth      = try container.decodeIfPresent(String.self, forKey: .customWidth) ?? ""
+        customHeight     = try container.decodeIfPresent(String.self, forKey: .customHeight) ?? ""
+        customFramerate  = try container.decodeIfPresent(String.self, forKey: .customFramerate) ?? ""
+    }
+
     // Used both as the Bitrate field's placeholder and as the actual fallback
     // value when the field is left blank — see PresetConfig.effectiveBitrateMbps.
     static let defaultH264BitrateMbps = "18"

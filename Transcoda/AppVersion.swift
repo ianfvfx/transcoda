@@ -5,7 +5,7 @@ import Foundation
 // rolled back to easily.
 enum AppVersion {
     static let major = 1
-    static let build = 9
+    static let build = 10
 
     static var current: String { "\(major).\(String(format: "%04d", build))" }
 }

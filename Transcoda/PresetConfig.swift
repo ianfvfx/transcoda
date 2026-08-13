@@ -290,6 +290,13 @@ enum PresetConfig {
         if interlaced { vfFilters.append("setfield=tff") }
         if let res = customResolutionValue(settings) ?? settings.resolution.ffmpegValue {
             vfFilters.append("scale=\(res)")
+            // Without this, the output can carry over aspect-ratio metadata
+            // from the source that no longer matches the new pixel dimensions
+            // (e.g. scaling 1920x1080 -> 1920x540 but the file still reports
+            // a 16:9 display aspect ratio instead of the correct 32:9) —
+            // setsar=1 forces square pixels so DAR is derived from the actual
+            // output dimensions instead.
+            vfFilters.append("setsar=1")
         }
         if !vfFilters.isEmpty { args += ["-vf", vfFilters.joined(separator: ",")] }
         if interlaced { args += ["-flags", "+ildct+ilme"] }

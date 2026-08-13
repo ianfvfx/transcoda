@@ -60,6 +60,12 @@ struct StructuredSettings: Codable, Equatable {
     // clears it.
     var customFramerate: String = ""
 
+    // Shared by both codec families. When true, all audio options are
+    // disabled and the output has no audio track at all (-an) instead of the
+    // usual -c:a/-b:a/-ar/-ac flags. Toggled via clicking the "Audio" column
+    // header in EncodeOptionsView.
+    var muted: Bool = false
+
     // Explicit memberwise init — required once a custom init(from:) exists
     // below, since Swift only auto-generates the memberwise initializer when
     // no other initializer is present. Keeps every existing call site (which
@@ -69,7 +75,8 @@ struct StructuredSettings: Codable, Equatable {
          bitrateMbps: String, audioCodec: AudioCodec, audioBitrate: AudioBitrate,
          proResCodec: ProResCodec, audioSampleSize: AudioSampleSize, audioSampleRate: SampleRate,
          trimStartSeconds: String = "", maxFileSizeMB: String = "",
-         customWidth: String = "", customHeight: String = "", customFramerate: String = "") {
+         customWidth: String = "", customHeight: String = "", customFramerate: String = "",
+         muted: Bool = false) {
         self.codecFamily = codecFamily
         self.resolution = resolution
         self.framerate = framerate
@@ -85,12 +92,13 @@ struct StructuredSettings: Codable, Equatable {
         self.customWidth = customWidth
         self.customHeight = customHeight
         self.customFramerate = customFramerate
+        self.muted = muted
     }
 
     private enum CodingKeys: String, CodingKey {
         case codecFamily, resolution, framerate, scan, bitrateMbps, audioCodec, audioBitrate
         case proResCodec, audioSampleSize, audioSampleRate
-        case trimStartSeconds, maxFileSizeMB, customWidth, customHeight, customFramerate
+        case trimStartSeconds, maxFileSizeMB, customWidth, customHeight, customFramerate, muted
     }
 
     // Custom decoder: the first 10 fields have been there since presets became
@@ -117,6 +125,7 @@ struct StructuredSettings: Codable, Equatable {
         customWidth      = try container.decodeIfPresent(String.self, forKey: .customWidth) ?? ""
         customHeight     = try container.decodeIfPresent(String.self, forKey: .customHeight) ?? ""
         customFramerate  = try container.decodeIfPresent(String.self, forKey: .customFramerate) ?? ""
+        muted            = try container.decodeIfPresent(Bool.self, forKey: .muted) ?? false
     }
 
     // Used both as the Bitrate field's placeholder and as the actual fallback

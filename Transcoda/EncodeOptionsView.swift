@@ -218,27 +218,31 @@ struct EncodeOptionsView: View {
             Divider().padding(.horizontal, 12)
 
             VStack(alignment: .leading, spacing: 10) {
-                columnHeader("Audio")
-                optionRow("Codec") {
-                    Picker("", selection: settings.audioCodec) {
-                        ForEach(AudioCodec.allCases) { Text($0.rawValue).tag($0) }
+                audioColumnHeader(settings)
+                VStack(alignment: .leading, spacing: 10) {
+                    optionRow("Codec") {
+                        Picker("", selection: settings.audioCodec) {
+                            ForEach(AudioCodec.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.menu).labelsHidden()
                     }
-                    .pickerStyle(.menu).labelsHidden()
-                }
-                if settings.wrappedValue.audioCodec.usesBitrate {
-                    optionRow("Bitrate") {
-                        Picker("", selection: settings.audioBitrate) {
-                            ForEach(AudioBitrate.allCases) { Text($0.label).tag($0) }
+                    if settings.wrappedValue.audioCodec.usesBitrate {
+                        optionRow("Bitrate") {
+                            Picker("", selection: settings.audioBitrate) {
+                                ForEach(AudioBitrate.allCases) { Text($0.label).tag($0) }
+                            }
+                            .pickerStyle(.menu).labelsHidden()
+                        }
+                    }
+                    optionRow("Sample Rate") {
+                        Picker("", selection: settings.audioSampleRate) {
+                            ForEach(SampleRate.allCases) { Text($0.label).tag($0) }
                         }
                         .pickerStyle(.menu).labelsHidden()
                     }
                 }
-                optionRow("Sample Rate") {
-                    Picker("", selection: settings.audioSampleRate) {
-                        ForEach(SampleRate.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.menu).labelsHidden()
-                }
+                .disabled(settings.wrappedValue.muted)
+                .opacity(settings.wrappedValue.muted ? 0.4 : 1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -270,19 +274,23 @@ struct EncodeOptionsView: View {
             Divider().padding(.horizontal, 12)
 
             VStack(alignment: .leading, spacing: 10) {
-                columnHeader("Audio")
-                optionRow("Sample Size") {
-                    Picker("", selection: settings.audioSampleSize) {
-                        ForEach(AudioSampleSize.allCases) { Text($0.rawValue).tag($0) }
+                audioColumnHeader(settings)
+                VStack(alignment: .leading, spacing: 10) {
+                    optionRow("Sample Size") {
+                        Picker("", selection: settings.audioSampleSize) {
+                            ForEach(AudioSampleSize.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.menu).labelsHidden()
                     }
-                    .pickerStyle(.menu).labelsHidden()
-                }
-                optionRow("Sample Rate") {
-                    Picker("", selection: settings.audioSampleRate) {
-                        ForEach(SampleRate.allCases) { Text($0.label).tag($0) }
+                    optionRow("Sample Rate") {
+                        Picker("", selection: settings.audioSampleRate) {
+                            ForEach(SampleRate.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.menu).labelsHidden()
                     }
-                    .pickerStyle(.menu).labelsHidden()
                 }
+                .disabled(settings.wrappedValue.muted)
+                .opacity(settings.wrappedValue.muted ? 0.4 : 1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -608,6 +616,21 @@ struct EncodeOptionsView: View {
         Text(title)
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.primary)
+    }
+
+    // Clicking "Audio" toggles mute — no separate reveal/hide UI like
+    // Resolution/Frame Rate since there's no value to enter, just an on/off
+    // state. The options below are disabled/dimmed by the caller.
+    private func audioColumnHeader(_ settings: Binding<StructuredSettings>) -> some View {
+        Button {
+            settings.wrappedValue.muted.toggle()
+        } label: {
+            Text(settings.wrappedValue.muted ? "Audio (Muted)" : "Audio")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+        }
+        .buttonStyle(.plain)
+        .help(settings.wrappedValue.muted ? "Click to re-enable audio" : "Click to encode without audio")
     }
 
     private func optionRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {

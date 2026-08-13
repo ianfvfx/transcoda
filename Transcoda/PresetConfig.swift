@@ -164,6 +164,7 @@ enum PresetConfig {
     // Shared by estimatedOutputBytes and calculatedBitrateMbps so the audio
     // portion of the size budget is computed identically in both directions.
     private static func audioBitsPerSecond(for settings: StructuredSettings) -> Double {
+        guard !settings.muted else { return 0 }
         switch settings.audioCodec {
         case .aac:
             return (Double(settings.audioBitrate.rawValue) ?? 0) * 1000
@@ -171,6 +172,20 @@ enum PresetConfig {
             // Matches AudioCodec.pcm's hardcoded pcm_s24le, stereo.
             let sampleRate = Double(settings.audioSampleRate.rawValue) ?? 48000
             return sampleRate * 24 * 2
+        }
+    }
+
+    // -an strips audio entirely instead of the usual -c:a/-b:a/-ar/-ac flags.
+    private static func audioArguments(for settings: StructuredSettings) -> [String] {
+        guard !settings.muted else { return ["-an"] }
+        switch settings.codecFamily {
+        case .h264Mp4:
+            var args = ["-c:a", settings.audioCodec.ffmpegValue]
+            if settings.audioCodec.usesBitrate { args += ["-b:a", settings.audioBitrate.ffmpegValue] }
+            args += ["-ac", "2", "-ar", settings.audioSampleRate.rawValue]
+            return args
+        case .proRes:
+            return ["-c:a", settings.audioSampleSize.pcmCodec, "-ar", settings.audioSampleRate.rawValue, "-ac", "2"]
         }
     }
 
@@ -332,10 +347,8 @@ enum PresetConfig {
                 "-g", "25", "-keyint_min", "30", "-pix_fmt", "yuv420p",
                 "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
                 "-movflags", "+faststart",
-                "-c:a", settings.audioCodec.ffmpegValue,
             ]
-            if settings.audioCodec.usesBitrate { args += ["-b:a", settings.audioBitrate.ffmpegValue] }
-            args += ["-ac", "2", "-ar", settings.audioSampleRate.rawValue]
+            args += audioArguments(for: settings)
 
         case .proRes:
             args += [
@@ -343,10 +356,9 @@ enum PresetConfig {
                 "-profile:v", settings.proResCodec.profileIndex,
                 "-pix_fmt", settings.proResCodec.pixFmt,
                 "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
-                "-c:a", settings.audioSampleSize.pcmCodec,
-                "-ar", settings.audioSampleRate.rawValue, "-ac", "2",
-                "-f", "mov"
             ]
+            args += audioArguments(for: settings)
+            args += ["-f", "mov"]
         }
 
         if let trimValue, trimValue > 0, let inputURL {

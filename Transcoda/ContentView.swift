@@ -44,8 +44,22 @@ struct ContentView: View {
                 }
             }
         }
+        if customResolutionInvalid { return false }
         if useCustomOutput && outputDirectory == nil { return false }
         return true
+    }
+
+    // Custom Width/Height (shared by both codec families) must both be valid
+    // positive EVEN integers — yuv420p chroma subsampling halves each
+    // dimension, so an odd value fails the encode outright. Only checked when
+    // at least one of the two fields is non-blank (i.e. custom mode is in use).
+    private var customResolutionInvalid: Bool {
+        guard case .structured(let settings) = workingPreset.kind else { return false }
+        let w = settings.customWidth.trimmingCharacters(in: .whitespaces)
+        let h = settings.customHeight.trimmingCharacters(in: .whitespaces)
+        guard !w.isEmpty || !h.isEmpty else { return false }
+        guard let wi = Int(w), let hi = Int(h), wi > 0, hi > 0, wi % 2 == 0, hi % 2 == 0 else { return true }
+        return false
     }
 
     private var maxSizeModeActive: Bool {
@@ -173,6 +187,18 @@ struct ContentView: View {
                     }
                 }
                 .padding(16)
+            }
+
+            if customResolutionInvalid {
+                Divider()
+                Label(
+                    "Custom resolution needs valid Width and Height values, both even numbers.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
             }
 
             if !collidingJobs.isEmpty {

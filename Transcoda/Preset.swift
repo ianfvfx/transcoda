@@ -43,6 +43,15 @@ struct StructuredSettings: Codable, Equatable {
     // (manual bitrateMbps applies as normal). See PresetConfig.effectivePreset.
     var maxFileSizeMB: String = ""
 
+    // Shared by both codec families (same Resolution row). If both are valid
+    // positive even integers, they override the Resolution picker entirely —
+    // used for -vf scale=WxH instead of resolution.ffmpegValue. Must be even:
+    // yuv420p chroma subsampling halves each dimension, so an odd value fails
+    // the encode outright. Toggled via clicking the "Resolution" label in
+    // EncodeOptionsView; switching back to the picker clears both.
+    var customWidth: String = ""
+    var customHeight: String = ""
+
     // Used both as the Bitrate field's placeholder and as the actual fallback
     // value when the field is left blank — see PresetConfig.effectiveBitrateMbps.
     static let defaultH264BitrateMbps = "18"

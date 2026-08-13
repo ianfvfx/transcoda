@@ -141,6 +141,17 @@ enum PresetConfig {
         return trimmed.isEmpty ? StructuredSettings.defaultH264BitrateMbps : trimmed
     }
 
+    // nil unless both customWidth/customHeight are valid positive integers —
+    // evenness is a UI-level validation concern (ContentView.optionsValid),
+    // not enforced here, matching how bitrate/max-size validation is split
+    // between mechanical arg-building (this file) and gating (ContentView).
+    private static func customResolutionValue(_ settings: StructuredSettings) -> String? {
+        let w = settings.customWidth.trimmingCharacters(in: .whitespaces)
+        let h = settings.customHeight.trimmingCharacters(in: .whitespaces)
+        guard let wi = Int(w), let hi = Int(h), wi > 0, hi > 0 else { return nil }
+        return "\(wi)x\(hi)"
+    }
+
     // Shared by estimatedOutputBytes and calculatedBitrateMbps so the audio
     // portion of the size budget is computed identically in both directions.
     private static func audioBitsPerSecond(for settings: StructuredSettings) -> Double {
@@ -268,7 +279,9 @@ enum PresetConfig {
         args += ["-i", input]
         var vfFilters = [String]()
         if interlaced { vfFilters.append("setfield=tff") }
-        if let res = settings.resolution.ffmpegValue { vfFilters.append("scale=\(res)") }
+        if let res = customResolutionValue(settings) ?? settings.resolution.ffmpegValue {
+            vfFilters.append("scale=\(res)")
+        }
         if !vfFilters.isEmpty { args += ["-vf", vfFilters.joined(separator: ",")] }
         if interlaced { args += ["-flags", "+ildct+ilme"] }
         if let fr = settings.framerate.ffmpegValue { args += ["-r", fr] }

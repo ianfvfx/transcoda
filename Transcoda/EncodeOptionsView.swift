@@ -17,6 +17,7 @@ struct EncodeOptionsView: View {
     @State private var newPresetIsStructured = true
     @State private var newPresetCodecFamily: CodecFamily = .h264Mp4
     @State private var errorMessage: String?
+    @State private var showCustomResolutionFields = false
 
     var body: some View {
         VStack(spacing: 12) {
@@ -32,6 +33,13 @@ struct EncodeOptionsView: View {
             Button("OK") { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
+        }
+        .onChange(of: workingPreset.id) {
+            if case .structured(let settings) = workingPreset.kind {
+                showCustomResolutionFields = !settings.customWidth.isEmpty && !settings.customHeight.isEmpty
+            } else {
+                showCustomResolutionFields = false
+            }
         }
     }
 
@@ -175,14 +183,7 @@ struct EncodeOptionsView: View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 columnHeader("Video")
-                optionRow("Resolution") {
-                    Picker("", selection: settings.resolution) {
-                        ForEach(Resolution.allCases) { res in
-                            Text(resolutionLabel(res)).tag(res)
-                        }
-                    }
-                    .pickerStyle(.menu).labelsHidden()
-                }
+                resolutionRow(settings)
                 optionRow("Frame Rate") {
                     Picker("", selection: settings.framerate) {
                         ForEach(FrameRate.allCases) { Text($0.label).tag($0) }
@@ -257,14 +258,7 @@ struct EncodeOptionsView: View {
                     }
                     .pickerStyle(.menu).labelsHidden()
                 }
-                optionRow("Resolution") {
-                    Picker("", selection: settings.resolution) {
-                        ForEach(Resolution.allCases) { res in
-                            Text(resolutionLabel(res)).tag(res)
-                        }
-                    }
-                    .pickerStyle(.menu).labelsHidden()
-                }
+                resolutionRow(settings)
                 optionRow("Frame Rate") {
                     Picker("", selection: settings.framerate) {
                         ForEach(FrameRate.allCases) { Text($0.label).tag($0) }
@@ -631,6 +625,48 @@ struct EncodeOptionsView: View {
                 .font(.callout)
                 .lineLimit(1)
             content()
+        }
+    }
+
+    // Clicking the "Resolution" label toggles between the preset dropdown and
+    // two Width/Height fields for an arbitrary custom resolution. Switching
+    // back to the dropdown clears both fields rather than just hiding them.
+    private func resolutionRow(_ settings: Binding<StructuredSettings>) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                showCustomResolutionFields.toggle()
+                if !showCustomResolutionFields {
+                    settings.wrappedValue.customWidth = ""
+                    settings.wrappedValue.customHeight = ""
+                }
+            } label: {
+                Text("Resolution")
+                    .frame(width: 90, alignment: .leading)
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .help(showCustomResolutionFields ? "Switch back to resolution presets" : "Enter a custom width & height")
+
+            if showCustomResolutionFields {
+                HStack(spacing: 4) {
+                    TextField("Width", text: settings.customWidth)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 60)
+                    Text("×").foregroundStyle(.secondary)
+                    TextField("Height", text: settings.customHeight)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 60)
+                }
+            } else {
+                Picker("", selection: settings.resolution) {
+                    ForEach(Resolution.allCases) { res in
+                        Text(resolutionLabel(res)).tag(res)
+                    }
+                }
+                .pickerStyle(.menu).labelsHidden()
+            }
         }
     }
 

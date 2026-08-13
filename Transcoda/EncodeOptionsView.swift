@@ -18,6 +18,7 @@ struct EncodeOptionsView: View {
     @State private var newPresetCodecFamily: CodecFamily = .h264Mp4
     @State private var errorMessage: String?
     @State private var showCustomResolutionFields = false
+    @State private var showCustomFramerateField = false
 
     var body: some View {
         VStack(spacing: 12) {
@@ -37,8 +38,10 @@ struct EncodeOptionsView: View {
         .onChange(of: workingPreset.id) {
             if case .structured(let settings) = workingPreset.kind {
                 showCustomResolutionFields = !settings.customWidth.isEmpty && !settings.customHeight.isEmpty
+                showCustomFramerateField = !settings.customFramerate.isEmpty
             } else {
                 showCustomResolutionFields = false
+                showCustomFramerateField = false
             }
         }
     }
@@ -184,12 +187,7 @@ struct EncodeOptionsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 columnHeader("Video")
                 resolutionRow(settings)
-                optionRow("Frame Rate") {
-                    Picker("", selection: settings.framerate) {
-                        ForEach(FrameRate.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.menu).labelsHidden()
-                }
+                framerateRow(settings)
                 optionRow("Bitrate") {
                     HStack(spacing: 4) {
                         TextField(StructuredSettings.defaultH264BitrateMbps, text: settings.bitrateMbps)
@@ -259,12 +257,7 @@ struct EncodeOptionsView: View {
                     .pickerStyle(.menu).labelsHidden()
                 }
                 resolutionRow(settings)
-                optionRow("Frame Rate") {
-                    Picker("", selection: settings.framerate) {
-                        ForEach(FrameRate.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.menu).labelsHidden()
-                }
+                framerateRow(settings)
                 optionRow("Scan") {
                     Picker("", selection: settings.scan) {
                         ForEach(ScanType.allCases) { Text($0.rawValue).tag($0) }
@@ -664,6 +657,42 @@ struct EncodeOptionsView: View {
                     ForEach(Resolution.allCases) { res in
                         Text(resolutionLabel(res)).tag(res)
                     }
+                }
+                .pickerStyle(.menu).labelsHidden()
+            }
+        }
+    }
+
+    // Same clickable-label pattern as resolutionRow — decimals are meaningful
+    // for frame rate (23.976, 29.97), so the field has no width/height-style
+    // even/odd constraint.
+    private func framerateRow(_ settings: Binding<StructuredSettings>) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                showCustomFramerateField.toggle()
+                if !showCustomFramerateField {
+                    settings.wrappedValue.customFramerate = ""
+                }
+            } label: {
+                Text("Frame Rate")
+                    .frame(width: 90, alignment: .leading)
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .help(showCustomFramerateField ? "Switch back to frame rate presets" : "Enter a custom frame rate")
+
+            if showCustomFramerateField {
+                HStack(spacing: 4) {
+                    TextField("fps", text: settings.customFramerate)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 60)
+                    Text("fps").foregroundStyle(.secondary).font(.callout)
+                }
+            } else {
+                Picker("", selection: settings.framerate) {
+                    ForEach(FrameRate.allCases) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.menu).labelsHidden()
             }

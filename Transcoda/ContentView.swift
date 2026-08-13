@@ -45,6 +45,7 @@ struct ContentView: View {
             }
         }
         if customResolutionInvalid { return false }
+        if customFramerateInvalid { return false }
         if useCustomOutput && outputDirectory == nil { return false }
         return true
     }
@@ -59,6 +60,17 @@ struct ContentView: View {
         let h = settings.customHeight.trimmingCharacters(in: .whitespaces)
         guard !w.isEmpty || !h.isEmpty else { return false }
         guard let wi = Int(w), let hi = Int(h), wi > 0, hi > 0, wi % 2 == 0, hi % 2 == 0 else { return true }
+        return false
+    }
+
+    // Custom Frame Rate (shared by both codec families) just needs to be a
+    // valid positive number — decimals like 23.976 are meaningful here, so
+    // there's no even/odd constraint like Width/Height.
+    private var customFramerateInvalid: Bool {
+        guard case .structured(let settings) = workingPreset.kind else { return false }
+        let fr = settings.customFramerate.trimmingCharacters(in: .whitespaces)
+        guard !fr.isEmpty else { return false }
+        guard let v = Double(fr), v > 0 else { return true }
         return false
     }
 
@@ -193,6 +205,18 @@ struct ContentView: View {
                 Divider()
                 Label(
                     "Custom resolution needs valid Width and Height values, both even numbers.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            }
+
+            if customFramerateInvalid {
+                Divider()
+                Label(
+                    "Custom frame rate needs a valid positive number.",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.caption)

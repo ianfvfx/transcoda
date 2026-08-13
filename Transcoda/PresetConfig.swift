@@ -152,6 +152,15 @@ enum PresetConfig {
         return "\(wi)x\(hi)"
     }
 
+    // nil unless customFramerate is a valid positive number. Unlike width/
+    // height, decimals are meaningful here (23.976, 29.97) so the raw typed
+    // string is passed straight through rather than reformatted.
+    private static func customFramerateValue(_ settings: StructuredSettings) -> String? {
+        let fr = settings.customFramerate.trimmingCharacters(in: .whitespaces)
+        guard let v = Double(fr), v > 0 else { return nil }
+        return fr
+    }
+
     // Shared by estimatedOutputBytes and calculatedBitrateMbps so the audio
     // portion of the size budget is computed identically in both directions.
     private static func audioBitsPerSecond(for settings: StructuredSettings) -> Double {
@@ -284,7 +293,8 @@ enum PresetConfig {
         }
         if !vfFilters.isEmpty { args += ["-vf", vfFilters.joined(separator: ",")] }
         if interlaced { args += ["-flags", "+ildct+ilme"] }
-        if let fr = settings.framerate.ffmpegValue { args += ["-r", fr] }
+        let effectiveFramerate = customFramerateValue(settings) ?? settings.framerate.ffmpegValue
+        if let fr = effectiveFramerate { args += ["-r", fr] }
 
         switch settings.codecFamily {
         case .h264Mp4:
@@ -333,7 +343,7 @@ enum PresetConfig {
         }
 
         if let trimValue, trimValue > 0, let inputURL {
-            if let newTC = shiftedTimecode(inputURL: inputURL, trimSeconds: trimValue, framerateOverride: settings.framerate.ffmpegValue) {
+            if let newTC = shiftedTimecode(inputURL: inputURL, trimSeconds: trimValue, framerateOverride: effectiveFramerate) {
                 args += ["-timecode", newTC]
             }
         }

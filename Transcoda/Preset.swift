@@ -52,6 +52,14 @@ struct StructuredSettings: Codable, Equatable {
     var customWidth: String = ""
     var customHeight: String = ""
 
+    // Shared by both codec families (same Frame Rate row). If a valid positive
+    // number, overrides the Frame Rate picker for -r <value> — unlike
+    // width/height, decimals are valid (e.g. 23.976) and the raw typed string
+    // is passed straight through, matching Trim Start's convention. Toggled
+    // via clicking the "Frame Rate" label; switching back to the picker
+    // clears it.
+    var customFramerate: String = ""
+
     // Used both as the Bitrate field's placeholder and as the actual fallback
     // value when the field is left blank — see PresetConfig.effectiveBitrateMbps.
     static let defaultH264BitrateMbps = "18"

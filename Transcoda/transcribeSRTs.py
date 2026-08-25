@@ -1,17 +1,31 @@
 from pathlib import Path
 import sys
+import av
 from faster_whisper import WhisperModel
 
 def main():
+    # Errors go to stderr (not the default stdout) since that's what
+    # Transcoda captures for its failure messages — an error printed to
+    # stdout would silently disappear, leaving only a bare exit code.
     if len(sys.argv) not in (2, 3):
-        print(f"Usage: python {Path(sys.argv[0]).name} <video_file> [output_srt_path]")
+        print(f"Usage: python {Path(sys.argv[0]).name} <video_file> [output_srt_path]", file=sys.stderr)
         sys.exit(1)
 
     input_file = Path(sys.argv[1])
 
     if not input_file.exists():
-        print(f"Error: File not found: {input_file}")
+        print(f"Error: File not found: {input_file}", file=sys.stderr)
         sys.exit(1)
+
+    # faster-whisper decodes audio via PyAV, which crashes with a cryptic
+    # low-level "IndexError: tuple index out of range" (av/container/
+    # streams.py) if the file has no audio stream at all, rather than any
+    # clear message. Check up front instead — also saves loading the model
+    # (several seconds) just to fail afterwards.
+    with av.open(str(input_file)) as probe:
+        if not probe.streams.audio:
+            print(f"Error: No audio track found in {input_file.name} — nothing to transcribe.", file=sys.stderr)
+            sys.exit(1)
 
     # Optional second argument lets a caller (Transcoda) control exactly where
     # the .srt lands, matching its own output-location settings. Falls back to

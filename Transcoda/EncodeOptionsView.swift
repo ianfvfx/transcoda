@@ -64,6 +64,8 @@ struct EncodeOptionsView: View {
                         get: { rawTemplate },
                         set: { workingPreset.kind = .advanced(rawTemplate: $0) }
                     ))
+                case .transcribe:
+                    transcribeNote
                 }
 
                 Divider()
@@ -94,6 +96,14 @@ struct EncodeOptionsView: View {
             set: { newId in
                 if let canonical = presetStore.canonicalCopy(for: newId) {
                     workingPreset = canonical
+                    // Transcribe SRTs only exposes folder location — File
+                    // Name/Suffix are hidden for it, so clear any leftover
+                    // value from a previously-selected preset rather than
+                    // letting it silently keep applying while out of view.
+                    if case .transcribe = canonical.kind {
+                        outputFileName = ""
+                        outputSuffix = ""
+                    }
                 }
             }
         )
@@ -178,6 +188,18 @@ struct EncodeOptionsView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Transcribe SRTs note
+
+    private var transcribeNote: some View {
+        HStack {
+            Image(systemName: "waveform")
+                .foregroundStyle(.tertiary)
+            Text("Generates an SRT subtitle file from each source file's audio — no video is encoded.")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
     }
 
     // MARK: - H.264/MP4 two-column layout
@@ -375,41 +397,51 @@ struct EncodeOptionsView: View {
                 }
             }
 
-            // File name and suffix — mutually exclusive
-            HStack(alignment: .top, spacing: 0) {
-                VStack(alignment: .leading, spacing: 10) {
-                    columnHeader("File Name")
-                    TextField("Same as source", text: Binding(
-                        get: { outputFileName },
-                        set: { newVal in
-                            outputFileName = newVal
-                            if !newVal.isEmpty { outputSuffix = "" }
-                        }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(!outputSuffix.isEmpty)
-                    .opacity(outputSuffix.isEmpty ? 1 : 0.4)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // File name and suffix — mutually exclusive. Not shown for
+            // Transcribe SRTs, which only exposes folder location; the .srt
+            // always takes the input file's own stem (matching
+            // transcribeSRTs.py's own default naming).
+            if !isTranscribePreset {
+                HStack(alignment: .top, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        columnHeader("File Name")
+                        TextField("Same as source", text: Binding(
+                            get: { outputFileName },
+                            set: { newVal in
+                                outputFileName = newVal
+                                if !newVal.isEmpty { outputSuffix = "" }
+                            }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!outputSuffix.isEmpty)
+                        .opacity(outputSuffix.isEmpty ? 1 : 0.4)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                Divider().padding(.horizontal, 12)
+                    Divider().padding(.horizontal, 12)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    columnHeader("Suffix")
-                    TextField(workingPreset.outputSuffix, text: Binding(
-                        get: { outputSuffix },
-                        set: { newVal in
-                            outputSuffix = newVal
-                            if !newVal.isEmpty { outputFileName = "" }
-                        }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(!outputFileName.isEmpty)
-                    .opacity(outputFileName.isEmpty ? 1 : 0.4)
+                    VStack(alignment: .leading, spacing: 10) {
+                        columnHeader("Suffix")
+                        TextField(workingPreset.outputSuffix, text: Binding(
+                            get: { outputSuffix },
+                            set: { newVal in
+                                outputSuffix = newVal
+                                if !newVal.isEmpty { outputFileName = "" }
+                            }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!outputFileName.isEmpty)
+                        .opacity(outputFileName.isEmpty ? 1 : 0.4)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private var isTranscribePreset: Bool {
+        if case .transcribe = workingPreset.kind { return true }
+        return false
     }
 
     // MARK: - FFmpeg preview
@@ -425,8 +457,11 @@ struct EncodeOptionsView: View {
                     .padding(6)
             }
         } label: {
-            Label("FFmpeg Parameters", systemImage: "terminal")
-                .font(.headline)
+            Label(
+                isTranscribePreset ? "Transcribe Command" : "FFmpeg Parameters",
+                systemImage: isTranscribePreset ? "waveform" : "terminal"
+            )
+            .font(.headline)
         }
     }
 

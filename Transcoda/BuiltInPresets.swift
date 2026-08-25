@@ -87,5 +87,14 @@ enum BuiltInPresets {
         outputSuffix: "_PEACH"
     )
 
-    static let all: [Preset] = [mp4, proRes, clearcastMP4, clearcastProRes, extremeReach, peach]
+    static let transcribeSRTs = Preset(
+        id: UUID(uuidString: "8F2C1A00-0001-4000-8000-000000000007")!,
+        name: "Transcribe SRTs",
+        origin: .builtIn,
+        kind: .transcribe,
+        outputExtension: "srt",
+        outputSuffix: ""
+    )
+
+    static let all: [Preset] = [mp4, proRes, clearcastMP4, clearcastProRes, extremeReach, peach, transcribeSRTs]
 }

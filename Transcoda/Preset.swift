@@ -168,6 +168,10 @@ struct StructuredSettings: Codable, Equatable {
 enum PresetKind: Codable, Equatable {
     case structured(StructuredSettings)
     case advanced(rawTemplate: String)   // tokens: {input}, {output}
+    // No video encode at all — runs the bundled transcribeSRTs.py against the
+    // external Whisper Python environment instead of ffmpeg. No associated
+    // settings: there's nothing to configure beyond output location.
+    case transcribe
 }
 
 // MARK: - Preset

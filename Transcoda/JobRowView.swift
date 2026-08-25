@@ -59,7 +59,11 @@ struct JobRowView: View {
                 }
             }
 
-            if job.status == .encoding || job.status == .complete {
+            // Transcription has no stdout progress channel like ffmpeg's
+            // -progress pipe:1, so job.progress just stays 0 until it jumps to
+            // 1.0 on completion — a percentage bar stuck at 0% the whole time
+            // is more confusing than no bar at all, so skip it while encoding.
+            if job.status == .complete || (job.status == .encoding && !job.isTranscribeJob) {
                 ProgressView(value: job.progress)
                     .progressViewStyle(.linear)
                     .tint(progressTint)

@@ -93,10 +93,15 @@ class EncodingJob: ObservableObject, Identifiable {
 
     var displayName: String { inputURL.lastPathComponent }
 
+    var isTranscribeJob: Bool {
+        if case .transcribe = preset.kind { return true }
+        return false
+    }
+
     var statusLabel: String {
         switch status {
         case .waiting:       return "Waiting"
-        case .encoding:      return "Encoding…"
+        case .encoding:      return isTranscribeJob ? "Transcribing…" : "Encoding…"
         case .complete:      return "Complete"
         case .failed(let e): return "Failed: \(e)"
         }

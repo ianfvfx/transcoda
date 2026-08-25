@@ -25,6 +25,11 @@ struct ContentView: View {
         pendingDurationJobs.isEmpty
     }
 
+    private var isTranscribePreset: Bool {
+        if case .transcribe = workingPreset.kind { return true }
+        return false
+    }
+
     private var optionsValid: Bool {
         if case .structured(let settings) = workingPreset.kind, settings.codecFamily == .h264Mp4 {
             let maxSize = settings.maxFileSizeMB.trimmingCharacters(in: .whitespaces)
@@ -271,7 +276,7 @@ struct ContentView: View {
                         .buttonStyle(.bordered)
                         .tint(.red)
                 } else {
-                    Button("Encode") { startEncoding() }
+                    Button(isTranscribePreset ? "Transcribe" : "Encode") { startEncoding() }
                         .buttonStyle(.borderedProminent)
                         .disabled(!canStart)
                         .keyboardShortcut(.return, modifiers: .command)

@@ -3,6 +3,17 @@ import Foundation
 let ffmpegPath  = "/Applications/ffmpeg"
 let ffprobePath = "/Applications/ffprobe"
 
+// External, like ffmpeg/ffprobe — a dedicated Python virtual environment set
+// up once per user account via the bundled setup_transcoda_whisper.command
+// script, keeping faster-whisper/ctranslate2 fully isolated from whatever
+// else is on the machine's Python installation.
+let transcribePythonPath = NSHomeDirectory() + "/Library/Application Support/Transcoda/whisper-env/bin/python3"
+
+// Bundled inside the app itself (unlike the Python environment) since it's a
+// small, dependency-free script with no external state — always ships in
+// sync with the app version rather than needing separate deployment.
+let transcribeScriptPath: String? = Bundle.main.path(forResource: "transcribeSRTs", ofType: "py")
+
 enum PresetConfig {
 
     // MARK: - ffprobe helper
@@ -280,10 +291,29 @@ enum PresetConfig {
             return structuredArguments(settings: settings, inputURL: inputURL, input: input, output: output)
         case .advanced(let rawTemplate):
             return tokenize(rawTemplate, input: input, output: output)
+        case .transcribe:
+            // Never actually invoked in practice — EncodingQueue and
+            // previewString both branch on preset.kind before reaching here,
+            // since a transcribe job runs python3 + the script, not ffmpeg.
+            // Present only so this switch stays exhaustive.
+            return []
         }
     }
 
+    // Args passed to the Python interpreter (transcribePythonPath) when
+    // running the bundled transcribeSRTs.py: script path, then input, then
+    // output. Empty if the script wasn't found in the app bundle.
+    static func transcribeArguments(input: String, output: String) -> [String] {
+        guard let scriptPath = transcribeScriptPath else { return [] }
+        return [scriptPath, input, output]
+    }
+
     static func previewString(for preset: Preset) -> String {
+        if case .transcribe = preset.kind {
+            let args = transcribeArguments(input: "<input>", output: "<output>.srt")
+            guard !args.isEmpty else { return "transcribeSRTs.py not found in app bundle" }
+            return ([transcribePythonPath] + args).joined(separator: " ")
+        }
         let args = arguments(preset: preset, inputURL: nil, input: "<input>", output: "<output>.\(preset.outputExtension)")
         return "ffmpeg " + args.joined(separator: " ")
     }

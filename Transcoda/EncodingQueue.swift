@@ -127,6 +127,11 @@ class EncodingQueue: ObservableObject {
     }
 
     private func encode(job: EncodingJob, completion: @escaping () -> Void) {
+        if case .transcribe = job.preset.kind {
+            encodeTranscribe(job: job, completion: completion)
+            return
+        }
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
 
@@ -153,21 +158,7 @@ class EncodingQueue: ObservableObject {
 
             let pipe = Pipe()
             process.standardOutput = pipe
-
-            // Captured continuously (not just read once at the end) so ffmpeg
-            // never blocks trying to write to a full, undrained pipe buffer.
-            // Without this, only the bare exit code was ever shown on failure —
-            // ffmpeg's actual error text (why it failed) was silently discarded.
-            let stderrPipe = Pipe()
-            process.standardError = stderrPipe
-            let stderrQueue = DispatchQueue(label: "com.transcoda.stderr-capture")
-            var stderrOutput = ""
-            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-                stderrQueue.sync { stderrOutput += text }
-            }
-
+            let readStderr = EncodingQueue.attachStderrCapture(to: process)
             self.currentProcess = process
 
             let startTime = Date()
@@ -186,8 +177,7 @@ class EncodingQueue: ObservableObject {
 
             process.waitUntilExit()
             pipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
-            let capturedStderr = stderrQueue.sync { stderrOutput }
+            let capturedStderr = readStderr()
 
             DispatchQueue.main.async {
                 if process.terminationStatus == 0 {
@@ -202,9 +192,87 @@ class EncodingQueue: ObservableObject {
         }
     }
 
-    // ffmpeg's stderr is often verbose (banner, codec info, warnings) — the
-    // actual fatal error is almost always among the last few lines it prints
-    // before exiting, so that's what's worth showing in a compact queue row.
+    // No ffmpeg involved at all — runs the bundled transcribeSRTs.py against
+    // the external Whisper Python environment to produce an .srt from the
+    // source file's audio. No stdout progress channel like ffmpeg's
+    // -progress pipe:1, so progress just stays indeterminate until it
+    // finishes (JobRowView shows a spinner rather than a percentage for it).
+    private func encodeTranscribe(job: EncodingJob, completion: @escaping () -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+
+            DispatchQueue.main.async { job.status = .encoding }
+
+            try? FileManager.default.createDirectory(
+                at: job.outputURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+
+            let args = PresetConfig.transcribeArguments(input: job.inputURL.path, output: job.outputURL.path)
+            guard !args.isEmpty else {
+                DispatchQueue.main.async {
+                    job.status = .failed("transcribeSRTs.py not found in app bundle.")
+                }
+                completion()
+                return
+            }
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: transcribePythonPath)
+            process.arguments     = args
+            let readStderr = EncodingQueue.attachStderrCapture(to: process)
+            self.currentProcess = process
+
+            do {
+                try process.run()
+            } catch {
+                // Most likely cause: the whisper-env venv hasn't been set up
+                // yet on this machine — see setup_transcoda_whisper.command.
+                DispatchQueue.main.async {
+                    job.status = .failed("Couldn't launch transcription environment — has setup_transcoda_whisper.command been run on this Mac? (\(error.localizedDescription))")
+                }
+                completion()
+                return
+            }
+
+            process.waitUntilExit()
+            let capturedStderr = readStderr()
+
+            DispatchQueue.main.async {
+                if process.terminationStatus == 0 {
+                    job.status   = .complete
+                    job.progress = 1.0
+                } else {
+                    let tail = EncodingQueue.lastLines(capturedStderr, count: 3)
+                    job.status = .failed(tail.isEmpty ? "Exit code \(process.terminationStatus)" : tail)
+                }
+                completion()
+            }
+        }
+    }
+
+    // Wires up continuous stderr capture on `process` (so it never blocks
+    // trying to write to a full, undrained pipe buffer) and returns a closure
+    // to retrieve what's been captured — call after waitUntilExit().
+    private static func attachStderrCapture(to process: Process) -> () -> String {
+        let stderrPipe = Pipe()
+        process.standardError = stderrPipe
+        let queue = DispatchQueue(label: "com.transcoda.stderr-capture")
+        var output = ""
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            queue.sync { output += text }
+        }
+        return {
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            return queue.sync { output }
+        }
+    }
+
+    // Verbose subprocess stderr (banner/info/warnings) usually has the actual
+    // fatal error among the last few lines before exiting — that's what's
+    // worth showing in a compact queue row.
     private static func lastLines(_ text: String, count: Int) -> String {
         let lines = text
             .components(separatedBy: .newlines)
@@ -245,8 +313,8 @@ class EncodingQueue: ObservableObject {
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
             let content   = UNMutableNotificationContent()
-            content.title = "Encoding Complete"
-            content.body  = "\(success) of \(total) file\(total == 1 ? "" : "s") encoded successfully."
+            content.title = "Queue Complete"
+            content.body  = "\(success) of \(total) file\(total == 1 ? "" : "s") processed successfully."
             content.sound = .default
             let request   = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
             center.add(request)

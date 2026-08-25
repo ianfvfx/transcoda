@@ -13,3 +13,7 @@ DerivedData/
 # Swift Package Manager
 .build/
 .swiftpm/
+
+# Python (transcribeSRTs.py)
+__pycache__/
+*.pyc

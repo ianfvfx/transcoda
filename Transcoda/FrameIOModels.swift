@@ -9,6 +9,15 @@ struct FrameIODataEnvelope<T: Decodable>: Decodable {
 
 struct FrameIOListEnvelope<T: Decodable>: Decodable {
     let data: [T]
+    let links: FrameIOLinks?
+}
+
+// `next` is the request path for the following page (cursor already
+// embedded via the `after` query param), or nil once there are no more
+// pages. List endpoints default to 50 items per page, so this is required
+// for any account with more than 50 accounts/workspaces/projects.
+struct FrameIOLinks: Decodable {
+    let next: String?
 }
 
 // MARK: - Hierarchy

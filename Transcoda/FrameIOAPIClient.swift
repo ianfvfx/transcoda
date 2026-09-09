@@ -17,12 +17,12 @@ struct FrameIOAPIClient {
     // Tolerates individual accounts/workspaces that fail to list (skips them)
     // rather than failing the whole fetch over one inaccessible corner.
     func fetchAccessibleProjects(completion: @escaping (Result<[FrameIOProjectOption], Error>) -> Void) {
-        request(method: "GET", path: "/v4/accounts", body: nil, decode: FrameIOListEnvelope<FrameIOAccount>.self) { result in
+        fetchAllPages(path: "/v4/accounts", decode: FrameIOAccount.self) { result in
             switch result {
             case .failure(let error):
                 completion(.failure(error))
-            case .success(let envelope):
-                self.sequentially(envelope.data, initial: [FrameIOProjectOption]()) { account, accumulated, next in
+            case .success(let accounts):
+                self.sequentially(accounts, initial: [FrameIOProjectOption]()) { account, accumulated, next in
                     self.fetchWorkspaces(accountID: account.id) { workspacesResult in
                         guard case .success(let workspaces) = workspacesResult else {
                             next(accumulated)
@@ -49,15 +49,11 @@ struct FrameIOAPIClient {
     }
 
     private func fetchWorkspaces(accountID: String, completion: @escaping (Result<[FrameIOWorkspace], Error>) -> Void) {
-        request(method: "GET", path: "/v4/accounts/\(accountID)/workspaces", body: nil, decode: FrameIOListEnvelope<FrameIOWorkspace>.self) { result in
-            completion(result.map { $0.data })
-        }
+        fetchAllPages(path: "/v4/accounts/\(accountID)/workspaces", decode: FrameIOWorkspace.self, completion: completion)
     }
 
     private func fetchProjectsList(accountID: String, workspaceID: String, completion: @escaping (Result<[FrameIOProject], Error>) -> Void) {
-        request(method: "GET", path: "/v4/accounts/\(accountID)/workspaces/\(workspaceID)/projects", body: nil, decode: FrameIOListEnvelope<FrameIOProject>.self) { result in
-            completion(result.map { $0.data })
-        }
+        fetchAllPages(path: "/v4/accounts/\(accountID)/workspaces/\(workspaceID)/projects", decode: FrameIOProject.self, completion: completion)
     }
 
     // MARK: - Folders
@@ -153,11 +149,55 @@ struct FrameIOAPIClient {
         }
     }
 
+    // MARK: - Pagination
+
+    // List endpoints default to 50 items per page (see FrameIOLinks) — this
+    // follows `links.next` until exhausted so callers always get the
+    // complete list, not just the first page.
+    private func fetchAllPages<T: Decodable>(
+        path: String,
+        decode: T.Type,
+        completion: @escaping (Result<[T], Error>) -> Void
+    ) {
+        fetchPage(url: baseURL.appendingPathComponent(path), accumulated: [], completion: completion)
+    }
+
+    private func fetchPage<T: Decodable>(
+        url: URL,
+        accumulated: [T],
+        completion: @escaping (Result<[T], Error>) -> Void
+    ) {
+        request(method: "GET", url: url, body: nil, decode: FrameIOListEnvelope<T>.self) { result in
+            switch result {
+            case .failure(let error):
+                completion(.failure(error))
+            case .success(let envelope):
+                let combined = accumulated + envelope.data
+                if let next = envelope.links?.next, !next.isEmpty,
+                   let nextURL = URL(string: next, relativeTo: self.baseURL)?.absoluteURL {
+                    self.fetchPage(url: nextURL, accumulated: combined, completion: completion)
+                } else {
+                    completion(.success(combined))
+                }
+            }
+        }
+    }
+
     // MARK: - Core request plumbing
 
     private func request<T: Decodable>(
         method: String,
         path: String,
+        body: [String: Any]?,
+        decode: T.Type,
+        completion: @escaping (Result<T, Error>) -> Void
+    ) {
+        request(method: method, url: baseURL.appendingPathComponent(path), body: body, decode: decode, completion: completion)
+    }
+
+    private func request<T: Decodable>(
+        method: String,
+        url: URL,
         body: [String: Any]?,
         decode: T.Type,
         completion: @escaping (Result<T, Error>) -> Void
@@ -168,7 +208,7 @@ struct FrameIOAPIClient {
                 case .failure(let error):
                     completion(.failure(error))
                 case .success(let token):
-                    var urlRequest = URLRequest(url: self.baseURL.appendingPathComponent(path))
+                    var urlRequest = URLRequest(url: url)
                     urlRequest.httpMethod = method
                     urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                     if let body {

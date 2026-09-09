@@ -6,5 +6,16 @@
 	<string>VideoEncoder</string>
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>Transcoda sends a notification when encoding is complete.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>ianfallon.Transcoda.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>adobe+b085406cc1a28d1501b0a00d19c0498b1d8e1899</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

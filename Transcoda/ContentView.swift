@@ -16,6 +16,10 @@ struct ContentView: View {
     @State private var outputSuffix: String    = ""
     @State private var isDropTargeted: Bool     = false
 
+    // Frame.io upload — unpersisted, like every other session setting above;
+    // resets to off on every launch and on resetAll().
+    @State private var frameIOProject: FrameIOProjectOption? = nil
+
     private var canStart: Bool {
         !queue.isRunning &&
         !queue.jobs.isEmpty &&
@@ -150,6 +154,7 @@ struct ContentView: View {
                         outputDirectory: $outputDirectory,
                         outputFileName: $outputFileName,
                         outputSuffix: $outputSuffix,
+                        frameIOProject: $frameIOProject,
                         onReset: resetAll
                     )
 
@@ -358,6 +363,7 @@ struct ContentView: View {
         outputDirectory   = nil
         outputFileName    = ""
         outputSuffix      = ""
+        frameIOProject    = nil
         queue.clear()
     }
 
@@ -368,7 +374,8 @@ struct ContentView: View {
             preset: workingPreset,
             outputDirectory: outDir,
             outputFileName: outputFileName.trimmingCharacters(in: .whitespaces),
-            outputSuffix: outputSuffix.trimmingCharacters(in: .whitespaces)
+            outputSuffix: outputSuffix.trimmingCharacters(in: .whitespaces),
+            frameIOProject: frameIOProject
         )
     }
 }

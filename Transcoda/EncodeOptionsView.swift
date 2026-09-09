@@ -8,6 +8,7 @@ struct EncodeOptionsView: View {
     @Binding var outputDirectory: URL?
     @Binding var outputFileName: String
     @Binding var outputSuffix: String
+    @Binding var frameIOProject: FrameIOProjectOption?
     var onReset: () -> Void
 
     @State private var showSaveAsSheet = false
@@ -19,6 +20,12 @@ struct EncodeOptionsView: View {
     @State private var errorMessage: String?
     @State private var showCustomResolutionFields = false
     @State private var showCustomFramerateField = false
+
+    // Transient Frame.io UI state — the project list is re-fetched each time
+    // the checkbox is ticked on, so it doesn't need to live in ContentView.
+    @State private var frameIOAvailableProjects: [FrameIOProjectOption] = []
+    @State private var frameIOAuthBusy = false
+    @State private var frameIOErrorMessage: String?
 
     var body: some View {
         VStack(spacing: 12) {
@@ -34,6 +41,14 @@ struct EncodeOptionsView: View {
             Button("OK") { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
+        }
+        .alert("Frame.io", isPresented: Binding(
+            get: { frameIOErrorMessage != nil },
+            set: { if !$0 { frameIOErrorMessage = nil } }
+        )) {
+            Button("OK") { frameIOErrorMessage = nil }
+        } message: {
+            Text(frameIOErrorMessage ?? "")
         }
         .onChange(of: workingPreset.id) {
             if case .structured(let settings) = workingPreset.kind {
@@ -402,6 +417,8 @@ struct EncodeOptionsView: View {
             // always takes the input file's own stem (matching
             // transcribeSRTs.py's own default naming).
             if !isTranscribePreset {
+                frameIOUploadRow
+
                 HStack(alignment: .top, spacing: 0) {
                     VStack(alignment: .leading, spacing: 10) {
                         columnHeader("File Name")
@@ -442,6 +459,89 @@ struct EncodeOptionsView: View {
     private var isTranscribePreset: Bool {
         if case .transcribe = workingPreset.kind { return true }
         return false
+    }
+
+    // MARK: - Frame.io upload
+
+    private var frameIOUploadRow: some View {
+        HStack(spacing: 8) {
+            Toggle("Upload to Frame.io", isOn: frameIOToggleBinding)
+                .toggleStyle(.checkbox)
+                .font(.callout)
+
+            if frameIOAuthBusy {
+                ProgressView()
+                    .controlSize(.small)
+            } else if frameIOProject != nil && !frameIOAvailableProjects.isEmpty {
+                Picker("", selection: frameIOProjectSelectionBinding) {
+                    ForEach(frameIOAvailableProjects) { option in
+                        Text(option.project.name).tag(option.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: 220)
+            }
+        }
+        .disabled(frameIOAuthBusy)
+        .padding(.bottom, 4)
+    }
+
+    // Ticking on doesn't flip frameIOProject directly — it stays nil (box
+    // unchecked) until sign-in and the project fetch both succeed, so a
+    // cancelled/failed login can't leave the box checked with nothing behind
+    // it. Ticking off clears everything immediately.
+    private var frameIOToggleBinding: Binding<Bool> {
+        Binding(
+            get: { frameIOProject != nil || frameIOAuthBusy },
+            set: { isOn in
+                if isOn {
+                    beginFrameIOAuthAndFetch()
+                } else {
+                    frameIOProject = nil
+                    frameIOAvailableProjects = []
+                }
+            }
+        )
+    }
+
+    private var frameIOProjectSelectionBinding: Binding<String> {
+        Binding(
+            get: { frameIOProject?.id ?? "" },
+            set: { newID in
+                frameIOProject = frameIOAvailableProjects.first { $0.id == newID }
+            }
+        )
+    }
+
+    private func beginFrameIOAuthAndFetch() {
+        frameIOAuthBusy = true
+        // FrameIOAuthManager is @MainActor-isolated; hop explicitly since this
+        // plain view method isn't itself actor-isolated.
+        Task { @MainActor in
+            FrameIOAuthManager.shared.ensureAuthenticated { result in
+                switch result {
+                case .failure(let error):
+                    DispatchQueue.main.async {
+                        self.frameIOAuthBusy = false
+                        self.frameIOErrorMessage = error.localizedDescription
+                    }
+                case .success:
+                    FrameIOAPIClient.shared.fetchAccessibleProjects { result in
+                        DispatchQueue.main.async {
+                            self.frameIOAuthBusy = false
+                            switch result {
+                            case .failure(let error):
+                                self.frameIOErrorMessage = error.localizedDescription
+                            case .success(let projects):
+                                self.frameIOAvailableProjects = projects
+                                self.frameIOProject = projects.first
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - FFmpeg preview

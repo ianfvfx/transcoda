@@ -8,6 +8,7 @@ class EncodingQueue: ObservableObject {
     @Published var isRunning = false
 
     private var currentProcess: Process?
+    private let frameIOUploadManager = FrameIOUploadManager()
 
     static let videoExtensions: Set<String> = ["mp4", "mov", "mxf", "avi", "mkv", "m4v", "mpg", "mpeg", "mts", "m2ts"]
 
@@ -72,8 +73,12 @@ class EncodingQueue: ObservableObject {
     func start(preset: Preset,
                outputDirectory: URL?,
                outputFileName: String,
-               outputSuffix: String) {
+               outputSuffix: String,
+               frameIOProject: FrameIOProjectOption? = nil) {
         guard !isRunning else { return }
+
+        let batchID = UUID()
+        let batchTimestamp = Self.makeBatchTimestamp()
 
         for job in jobs where job.status == .waiting {
             // Substitutes a per-file calculated bitrate when Max File Size is
@@ -82,10 +87,36 @@ class EncodingQueue: ObservableObject {
             job.outputDirectory = outputDirectory
             job.customFileName  = outputFileName
             job.customSuffix    = outputSuffix
+
+            job.frameIOUploadEnabled = frameIOProject != nil
+            job.frameIOAccountID     = frameIOProject?.accountID
+            job.frameIOProjectID     = frameIOProject?.project.id
+            job.frameIORootFolderID  = frameIOProject?.project.rootFolderID
+            job.frameIOBatchTimestamp = batchTimestamp
+            job.frameIOBatchID        = batchID
+        }
+
+        if let frameIOProject {
+            let uploadingJobs = jobs.filter { $0.status == .waiting && $0.frameIOUploadEnabled }
+            frameIOUploadManager.startBatch(
+                jobs: uploadingJobs,
+                accountID: frameIOProject.accountID,
+                projectID: frameIOProject.project.id,
+                rootFolderID: frameIOProject.project.rootFolderID,
+                batchID: batchID
+            )
         }
 
         isRunning = true
         encodeNext()
+    }
+
+    // Format matches the "YYYY_MM_DD_HHMM" folder-naming spec for standalone
+    // (non-folder-dropped) files uploaded to Frame.io.
+    private static func makeBatchTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy_MM_dd_HHmm"
+        return formatter.string(from: Date())
     }
 
     func cancel() {
@@ -170,7 +201,10 @@ class EncodingQueue: ObservableObject {
             do {
                 try process.run()
             } catch {
-                DispatchQueue.main.async { job.status = .failed(error.localizedDescription) }
+                DispatchQueue.main.async {
+                    job.status = .failed(error.localizedDescription)
+                    if job.frameIOUploadEnabled { self.frameIOUploadManager.skipDueToEncodeFailure(job) }
+                }
                 completion()
                 return
             }
@@ -183,9 +217,11 @@ class EncodingQueue: ObservableObject {
                 if process.terminationStatus == 0 {
                     job.status   = .complete
                     job.progress = 1.0
+                    if job.frameIOUploadEnabled { self.frameIOUploadManager.enqueue(job) }
                 } else {
                     let tail = EncodingQueue.lastLines(capturedStderr, count: 3)
                     job.status = .failed(tail.isEmpty ? "Exit code \(process.terminationStatus)" : tail)
+                    if job.frameIOUploadEnabled { self.frameIOUploadManager.skipDueToEncodeFailure(job) }
                 }
                 completion()
             }
@@ -242,6 +278,7 @@ class EncodingQueue: ObservableObject {
                 if process.terminationStatus == 0 {
                     job.status   = .complete
                     job.progress = 1.0
+                    if job.frameIOUploadEnabled { self.frameIOUploadManager.enqueue(job) }
                 } else {
                     let tail = EncodingQueue.lastLines(capturedStderr, count: 3)
                     job.status = .failed(tail.isEmpty ? "Exit code \(process.terminationStatus)" : tail)

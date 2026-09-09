@@ -45,6 +45,15 @@ struct JobRowView: View {
                             .font(.system(.caption2, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
+
+                    // Independent of job.status — an upload failure/progress
+                    // is never allowed to mask a successful encode.
+                    if job.uploadStatus != .none {
+                        Text(uploadStatusLabel)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(uploadStatusColor)
+                            .help(uploadStatusHelp)
+                    }
                 }
 
                 if let onRemove {
@@ -123,5 +132,29 @@ struct JobRowView: View {
         case .failed:   return Color.red.opacity(0.08)
         default:        return Color(NSColor.controlBackgroundColor)
         }
+    }
+
+    // MARK: - Frame.io upload status
+
+    private var uploadStatusLabel: String {
+        switch job.uploadStatus {
+        case .none:                    return ""
+        case .uploading(let progress): return "Uploading \(Int(progress * 100))%"
+        case .uploaded:                return "Uploaded to Frame.io"
+        case .failed:                  return "Frame.io upload failed"
+        }
+    }
+
+    private var uploadStatusColor: Color {
+        switch job.uploadStatus {
+        case .none, .uploading: return .accentColor
+        case .uploaded:         return .green
+        case .failed:           return .red
+        }
+    }
+
+    private var uploadStatusHelp: String {
+        if case .failed(let message) = job.uploadStatus { return message }
+        return uploadStatusLabel
     }
 }

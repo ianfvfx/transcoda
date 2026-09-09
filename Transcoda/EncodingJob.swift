@@ -8,6 +8,15 @@ enum JobStatus: Equatable {
     case failed(String)
 }
 
+// Deliberately independent of JobStatus — an upload failure must never be
+// mistaken for (or mask) a successful encode, and vice versa.
+enum FrameIOUploadStatus: Equatable {
+    case none
+    case uploading(progress: Double)
+    case uploaded
+    case failed(String)
+}
+
 class EncodingJob: ObservableObject, Identifiable {
     let id = UUID()
     let inputURL: URL
@@ -36,6 +45,20 @@ class EncodingJob: ObservableObject, Identifiable {
     var outputDirectory: URL?
     var customFileName: String = ""   // overrides stem entirely if set
     var customSuffix: String   = ""   // appended to original stem if set
+
+    // Frame.io upload — stamped at encode time alongside the fields above.
+    // frameIOBatchTimestamp names the shared destination folder for a
+    // standalone file (see FrameIOUploadManager); frameIOBatchID groups every
+    // job from the same Encode-press for upload-completion tracking, kept
+    // separate from the human-readable timestamp since two batches started
+    // within the same minute would otherwise collide.
+    var frameIOUploadEnabled: Bool = false
+    var frameIOAccountID: String?
+    var frameIOProjectID: String?
+    var frameIORootFolderID: String?
+    var frameIOBatchTimestamp: String?
+    var frameIOBatchID: UUID?
+    @Published var uploadStatus: FrameIOUploadStatus = .none
 
     init(inputURL: URL, sourceRelativeDirectory: String? = nil) {
         self.inputURL = inputURL

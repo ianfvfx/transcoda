@@ -172,6 +172,11 @@ enum PresetKind: Codable, Equatable {
     // external Whisper Python environment instead of ffmpeg. No associated
     // settings: there's nothing to configure beyond output location.
     case transcribe
+    // No video encode and no local output file at all — submits each queued
+    // file as-is to the studio's VidChecker Server over its SOAP API for QC,
+    // using the given template. templateId is nil until one is picked in the
+    // UI; Submit stays disabled until it's set (see ContentView.optionsValid).
+    case vidchecker(templateId: Int?)
 }
 
 // MARK: - Preset

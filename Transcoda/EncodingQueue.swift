@@ -11,20 +11,28 @@ class EncodingQueue: ObservableObject {
     private let frameIOUploadManager = FrameIOUploadManager()
 
     static let videoExtensions: Set<String> = ["mp4", "mov", "mxf", "avi", "mkv", "m4v", "mpg", "mpeg", "mts", "m2ts"]
+    // Only relevant for Vidchecker, which can check audio-only deliverables
+    // too — every other preset only ever encodes video.
+    static let audioExtensions: Set<String> = ["wav", "aiff", "aif", "mp3", "m4a", "aac", "flac", "wma", "caf"]
 
     // MARK: - Public API
 
     // Accepts a mix of file and folder URLs — folders are recursively scanned
-    // for video files, and each one found is tagged with its path relative to
-    // the top folder (see EncodingJob.sourceRelativeDirectory) so a custom
-    // output directory can mirror the source folder structure.
+    // for video or audio files, and each one found is tagged with its path
+    // relative to the top folder (see EncodingJob.sourceRelativeDirectory) so
+    // a custom output directory can mirror the source folder structure.
+    // Audio files can always be queued regardless of the current preset —
+    // it's only at submission time that a non-Vidchecker preset rejects an
+    // audio-sourced job (see EncodingQueue.encode), since you might queue a
+    // mixed batch before deciding what to do with it.
     func add(urls: [URL]) {
+        let accepted = EncodingQueue.videoExtensions.union(EncodingQueue.audioExtensions)
         let newJobs = urls.flatMap { url -> [EncodingJob] in
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return [] }
             if isDirectory.boolValue {
-                return jobsForFolder(url)
-            } else if EncodingQueue.videoExtensions.contains(url.pathExtension.lowercased()) {
+                return jobsForFolder(url, accepted: accepted)
+            } else if accepted.contains(url.pathExtension.lowercased()) {
                 return [EncodingJob(inputURL: url)]
             } else {
                 return []
@@ -44,7 +52,7 @@ class EncodingQueue: ObservableObject {
         }
     }
 
-    private func jobsForFolder(_ folderURL: URL) -> [EncodingJob] {
+    private func jobsForFolder(_ folderURL: URL, accepted: Set<String>) -> [EncodingJob] {
         let topFolderName = folderURL.lastPathComponent
         let folderComponents = folderURL.standardizedFileURL.pathComponents
 
@@ -57,7 +65,7 @@ class EncodingQueue: ObservableObject {
         var result: [EncodingJob] = []
         for case let fileURL as URL in enumerator {
             let isDir = (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            guard !isDir, EncodingQueue.videoExtensions.contains(fileURL.pathExtension.lowercased()) else { continue }
+            guard !isDir, accepted.contains(fileURL.pathExtension.lowercased()) else { continue }
 
             let containingDirComponents = fileURL.deletingLastPathComponent().standardizedFileURL.pathComponents
             let extraComponents = containingDirComponents.count > folderComponents.count
@@ -158,8 +166,31 @@ class EncodingQueue: ObservableObject {
     }
 
     private func encode(job: EncodingJob, completion: @escaping () -> Void) {
+        // Audio files can sit in the queue under any preset (see add(urls:)),
+        // but only Vidchecker actually knows what to do with one — every
+        // other preset rejects it outright here rather than handing an
+        // audio-only source to ffmpeg or the transcriber. completion() must
+        // stay inside the dispatched block (not called synchronously right
+        // here) — encodeNext()'s completion calls straight back into encode()
+        // for the next job, and every other path in this file already hops
+        // onto another queue before ever calling completion() for exactly
+        // this reason: several audio files in a row would otherwise recurse
+        // encode -> completion -> encodeNext -> encode synchronously on the
+        // same stack with no async break, overflowing it.
+        if EncodingQueue.audioExtensions.contains(job.inputURL.pathExtension.lowercased()), !job.isVidCheckerJob {
+            DispatchQueue.main.async {
+                job.status = .failed("Audio files cannot be submitted with this preset")
+                completion()
+            }
+            return
+        }
+
         if case .transcribe = job.preset.kind {
             encodeTranscribe(job: job, completion: completion)
+            return
+        }
+        if case .vidchecker(let templateId) = job.preset.kind {
+            submitVidCheckerTask(job: job, templateId: templateId, completion: completion)
             return
         }
 
@@ -286,6 +317,94 @@ class EncodingQueue: ObservableObject {
                 completion()
             }
         }
+    }
+
+    // MARK: - VidChecker
+
+    // No ffmpeg, no local output file at all — submits job.inputURL directly
+    // to VidChecker's PublicService over SOAP, using the template picked in
+    // the UI, then polls GetTask until it settles. PercentComplete drives the
+    // same progress bar ffmpeg jobs use; Failed/Reject map to job.status
+    // .failed (red), Passed/Warning map to .complete (green) — the actual
+    // CheckResult name is what's shown in the row (see EncodingJob.statusLabel).
+    private func submitVidCheckerTask(job: EncodingJob, templateId: Int?, completion: @escaping () -> Void) {
+        guard let templateId else {
+            DispatchQueue.main.async { job.status = .failed("No Vidchecker template selected") }
+            completion()
+            return
+        }
+        guard let uncPath = Self.convertToVidCheckerPath(job.inputURL) else {
+            DispatchQueue.main.async { job.status = .failed("File must be on the jobs share (/Volumes/jobs) to submit to Vidchecker") }
+            completion()
+            return
+        }
+
+        DispatchQueue.main.async { job.status = .encoding }
+
+        VidCheckerAPIClient.shared.newTask(filename: uncPath, templateId: templateId) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                DispatchQueue.main.async { job.status = .failed(error.localizedDescription) }
+                completion()
+            case .success(let taskId):
+                job.vidCheckerTaskId = taskId
+                self.pollVidCheckerTask(job: job, taskId: taskId, completion: completion)
+            }
+        }
+    }
+
+    private func pollVidCheckerTask(job: EncodingJob, taskId: Int, consecutiveFailures: Int = 0, completion: @escaping () -> Void) {
+        VidCheckerAPIClient.shared.getTask(id: taskId) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                // Transient network hiccups on a local-network SOAP call
+                // shouldn't fail the whole job — only give up after several
+                // consecutive failures, since polling tries again shortly anyway.
+                guard consecutiveFailures < 4 else {
+                    DispatchQueue.main.async { job.status = .failed(error.localizedDescription) }
+                    completion()
+                    return
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    self?.pollVidCheckerTask(job: job, taskId: taskId, consecutiveFailures: consecutiveFailures + 1, completion: completion)
+                }
+            case .success(let task):
+                DispatchQueue.main.async { job.progress = Double(task.percentComplete) / 100.0 }
+
+                let doneStatuses: Set<VidCheckerTaskStatus> = [.complete, .postProcessing, .movingFiles]
+                if let status = task.status, doneStatuses.contains(status), let checkResult = task.checkResult {
+                    DispatchQueue.main.async {
+                        job.vidCheckerCheckResult = checkResult.rawValue
+                        switch checkResult {
+                        case .passed, .warning:
+                            job.progress = 1.0
+                            job.status = .complete
+                        case .failed, .reject:
+                            job.status = .failed(checkResult.rawValue)
+                        }
+                    }
+                    completion()
+                } else {
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        self?.pollVidCheckerTask(job: job, taskId: taskId, completion: completion)
+                    }
+                }
+            }
+        }
+    }
+
+    // Converts this Mac's local mount of the jobs share into the UNC path
+    // VidChecker's own (Windows) server needs to read the same file —
+    // /Volumes/jobs/foo/bar.mp4 -> \\qs-c1\jobs\foo\bar.mp4. Returns nil for
+    // anything not on that share, since VidChecker has no way to read it.
+    private static func convertToVidCheckerPath(_ url: URL) -> String? {
+        let prefix = "/Volumes/jobs/"
+        let path = url.path
+        guard path.hasPrefix(prefix) else { return nil }
+        let relative = String(path.dropFirst(prefix.count)).replacingOccurrences(of: "/", with: "\\")
+        return "\\\\qs-c1\\jobs\\" + relative
     }
 
     // Wires up continuous stderr capture on `process` (so it never blocks

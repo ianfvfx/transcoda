@@ -121,12 +121,30 @@ class EncodingJob: ObservableObject, Identifiable {
         return false
     }
 
+    var isVidCheckerJob: Bool {
+        if case .vidchecker = preset.kind { return true }
+        return false
+    }
+
+    // Set once VidChecker returns a task ID, used to poll GetTask.
+    var vidCheckerTaskId: Int?
+
+    // The raw CheckResult name ("Passed"/"Warning"/"Failed"/"Reject") once a
+    // VidChecker job finishes — shown in place of the generic "Complete"/
+    // "Failed: ..." label, since the check result itself IS the meaningful
+    // outcome for this kind of job.
+    @Published var vidCheckerCheckResult: String?
+
     var statusLabel: String {
         switch status {
-        case .waiting:       return "Waiting"
-        case .encoding:      return isTranscribeJob ? "Transcribing…" : "Encoding…"
-        case .complete:      return "Complete"
-        case .failed(let e): return "Failed: \(e)"
+        case .waiting:
+            return "Waiting"
+        case .encoding:
+            return isVidCheckerJob ? "Checking…" : (isTranscribeJob ? "Transcribing…" : "Encoding…")
+        case .complete:
+            return isVidCheckerJob ? (vidCheckerCheckResult ?? "Complete") : "Complete"
+        case .failed(let e):
+            return isVidCheckerJob ? (vidCheckerCheckResult ?? "Failed") : "Failed: \(e)"
         }
     }
 }

@@ -291,11 +291,11 @@ enum PresetConfig {
             return structuredArguments(settings: settings, inputURL: inputURL, input: input, output: output)
         case .advanced(let rawTemplate):
             return tokenize(rawTemplate, input: input, output: output)
-        case .transcribe:
+        case .transcribe, .vidchecker:
             // Never actually invoked in practice — EncodingQueue and
             // previewString both branch on preset.kind before reaching here,
-            // since a transcribe job runs python3 + the script, not ffmpeg.
-            // Present only so this switch stays exhaustive.
+            // since neither a transcribe nor a VidChecker job runs ffmpeg at
+            // all. Present only so this switch stays exhaustive.
             return []
         }
     }

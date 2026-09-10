@@ -27,10 +27,19 @@ struct EncodeOptionsView: View {
     @State private var frameIOAuthBusy = false
     @State private var frameIOErrorMessage: String?
 
+    // Transient VidChecker UI state — fetched once per session the first
+    // time the VidChecker preset is selected (no auth step, unlike Frame.io,
+    // so there's no reason to defer it to a checkbox tick).
+    @State private var vidCheckerTemplates: [VidCheckerTemplate] = []
+    @State private var vidCheckerLoading = false
+    @State private var vidCheckerLoadError: String?
+
     var body: some View {
         VStack(spacing: 12) {
             optionsBox
-            ffmpegPreviewBox
+            if !isVidCheckerPreset {
+                ffmpegPreviewBox
+            }
         }
         .sheet(isPresented: $showSaveAsSheet) { saveAsSheet }
         .sheet(isPresented: $showNewPresetSheet) { newPresetSheet }
@@ -58,6 +67,9 @@ struct EncodeOptionsView: View {
                 showCustomResolutionFields = false
                 showCustomFramerateField = false
             }
+            if isVidCheckerPreset, vidCheckerTemplates.isEmpty, !vidCheckerLoading {
+                fetchVidCheckerTemplates()
+            }
         }
     }
 
@@ -81,10 +93,18 @@ struct EncodeOptionsView: View {
                     ))
                 case .transcribe:
                     transcribeNote
+                case .vidchecker:
+                    vidCheckerTemplateRow
                 }
 
-                Divider()
-                outputSection
+                // VidChecker has no output settings at all — it produces no
+                // local file, so there's nothing for File Name/Suffix/folder
+                // location to apply to. The template picker above is the
+                // only thing this preset needs.
+                if !isVidCheckerPreset {
+                    Divider()
+                    outputSection
+                }
 
             }
             .padding(10)
@@ -131,8 +151,11 @@ struct EncodeOptionsView: View {
                 .foregroundStyle(.secondary)
                 .font(.callout)
             Picker("", selection: presetSelectionBinding) {
-                Section("Built-in") {
-                    ForEach(presetStore.builtIns) { p in Text(p.name).tag(p.id) }
+                Section("Video Encodes") {
+                    ForEach(videoEncodePresets) { p in Text(p.name).tag(p.id) }
+                }
+                Section("Utilities") {
+                    ForEach(utilityPresets) { p in Text(p.name).tag(p.id) }
                 }
                 if !presetStore.customs.isEmpty {
                     Section("Custom") {
@@ -459,6 +482,93 @@ struct EncodeOptionsView: View {
     private var isTranscribePreset: Bool {
         if case .transcribe = workingPreset.kind { return true }
         return false
+    }
+
+    private var isVidCheckerPreset: Bool {
+        if case .vidchecker = workingPreset.kind { return true }
+        return false
+    }
+
+    // Built-ins split into two picker sections by kind — exhaustive switches
+    // so a future new PresetKind case forces a decision here rather than
+    // silently vanishing from both groups.
+    private var videoEncodePresets: [Preset] {
+        presetStore.builtIns.filter {
+            switch $0.kind {
+            case .structured, .advanced: return true
+            case .transcribe, .vidchecker: return false
+            }
+        }
+    }
+
+    private var utilityPresets: [Preset] {
+        presetStore.builtIns.filter {
+            switch $0.kind {
+            case .transcribe, .vidchecker: return true
+            case .structured, .advanced: return false
+            }
+        }
+    }
+
+    // MARK: - VidChecker
+
+    private var vidCheckerTemplateIdBinding: Binding<Int?> {
+        Binding(
+            get: {
+                if case .vidchecker(let templateId) = workingPreset.kind { return templateId }
+                return nil
+            },
+            set: { newValue in
+                workingPreset.kind = .vidchecker(templateId: newValue)
+            }
+        )
+    }
+
+    private var vidCheckerTemplateRow: some View {
+        HStack(spacing: 8) {
+            Text("Template")
+                .frame(width: 90, alignment: .leading)
+                .foregroundStyle(.secondary)
+                .font(.callout)
+
+            if vidCheckerLoading {
+                ProgressView().controlSize(.small)
+            } else if let vidCheckerLoadError {
+                Text(vidCheckerLoadError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+                Button("Retry") { fetchVidCheckerTemplates() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            } else {
+                Picker("", selection: vidCheckerTemplateIdBinding) {
+                    Text("Select…").tag(Int?.none)
+                    ForEach(vidCheckerTemplates) { template in
+                        Text(template.name).tag(Int?.some(template.id))
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func fetchVidCheckerTemplates() {
+        vidCheckerLoading = true
+        vidCheckerLoadError = nil
+        VidCheckerAPIClient.shared.listTemplates { result in
+            DispatchQueue.main.async {
+                vidCheckerLoading = false
+                switch result {
+                case .success(let templates):
+                    vidCheckerTemplates = templates.sorted { $0.name < $1.name }
+                case .failure(let error):
+                    vidCheckerLoadError = error.localizedDescription
+                }
+            }
+        }
     }
 
     // MARK: - Frame.io upload

@@ -96,5 +96,14 @@ enum BuiltInPresets {
         outputSuffix: ""
     )
 
-    static let all: [Preset] = [mp4, proRes, clearcastMP4, clearcastProRes, extremeReach, peach, transcribeSRTs]
+    static let vidChecker = Preset(
+        id: UUID(uuidString: "8F2C1A00-0001-4000-8000-000000000008")!,
+        name: "Vidchecker",
+        origin: .builtIn,
+        kind: .vidchecker(templateId: nil),
+        outputExtension: "",
+        outputSuffix: ""
+    )
+
+    static let all: [Preset] = [mp4, proRes, clearcastMP4, clearcastProRes, extremeReach, peach, transcribeSRTs, vidChecker]
 }

@@ -34,7 +34,22 @@ struct ContentView: View {
         return false
     }
 
+    private var isVidCheckerPreset: Bool {
+        if case .vidchecker = workingPreset.kind { return true }
+        return false
+    }
+
+    private var actionButtonLabel: String {
+        if isVidCheckerPreset { return "Submit" }
+        return isTranscribePreset ? "Transcribe" : "Encode"
+    }
+
     private var optionsValid: Bool {
+        // VidChecker has no output settings at all (they're hidden in the UI)
+        // — the only requirement is that a template has actually been picked.
+        if case .vidchecker(let templateId) = workingPreset.kind {
+            return templateId != nil
+        }
         if case .structured(let settings) = workingPreset.kind, settings.codecFamily == .h264Mp4 {
             let maxSize = settings.maxFileSizeMB.trimmingCharacters(in: .whitespaces)
             if !maxSize.isEmpty {
@@ -116,6 +131,7 @@ struct ContentView: View {
     // source, writing back into the source folder. Encoding into that path
     // would try to overwrite the input while ffmpeg is still reading it.
     private var collidingJobs: [EncodingJob] {
+        guard !isVidCheckerPreset else { return [] }   // no output file at all for VidChecker jobs
         guard !useCustomOutput || outputDirectory != nil else { return [] }
         let outDir  = useCustomOutput ? outputDirectory : nil
         let name    = outputFileName.trimmingCharacters(in: .whitespaces)
@@ -281,7 +297,7 @@ struct ContentView: View {
                         .buttonStyle(.bordered)
                         .tint(.red)
                 } else {
-                    Button(isTranscribePreset ? "Transcribe" : "Encode") { startEncoding() }
+                    Button(actionButtonLabel) { startEncoding() }
                         .buttonStyle(.borderedProminent)
                         .disabled(!canStart)
                         .keyboardShortcut(.return, modifiers: .command)
@@ -325,7 +341,10 @@ struct ContentView: View {
         panel.canChooseFiles           = true
         panel.canChooseDirectories     = true
         panel.allowsMultipleSelection  = true
-        panel.allowedContentTypes      = [.movie, .video, .mpeg4Movie, .quickTimeMovie]
+        // Audio files are always accepted into the queue regardless of the
+        // current preset — only submission time (EncodingQueue.encode) cares
+        // whether the selected preset is Vidchecker.
+        panel.allowedContentTypes      = [.movie, .video, .mpeg4Movie, .quickTimeMovie, .audio]
         panel.prompt = "Add to Queue"
         if panel.runModal() == .OK { enqueueURLs(panel.urls) }
     }
@@ -335,9 +354,10 @@ struct ContentView: View {
     }
 
     // Accepts both files and folders — EncodingQueue.add expands any folder into
-    // the video files it contains (recursively), so a dropped folder just needs
-    // to pass through here unfiltered.
+    // the accepted files it contains (recursively), so a dropped folder just
+    // needs to pass through here unfiltered.
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        let accepted = EncodingQueue.videoExtensions.union(EncodingQueue.audioExtensions)
         var handled = false
         for provider in providers {
             provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
@@ -345,7 +365,7 @@ struct ContentView: View {
                       let url  = URL(dataRepresentation: data, relativeTo: nil) else { return }
                 var isDirectory: ObjCBool = false
                 let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-                guard exists, isDirectory.boolValue || EncodingQueue.videoExtensions.contains(url.pathExtension.lowercased()) else { return }
+                guard exists, isDirectory.boolValue || accepted.contains(url.pathExtension.lowercased()) else { return }
                 DispatchQueue.main.async {
                     self.enqueueURLs([url])
                 }

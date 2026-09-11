@@ -20,13 +20,38 @@ struct ContentView: View {
     // resets to off on every launch and on resetAll().
     @State private var frameIOProject: FrameIOProjectOption? = nil
 
+    // Soundlay — also unpersisted (a specific audio file is a one-off choice,
+    // not a reusable preset setting; see EncodingJob.soundlayAudioURL).
+    // soundlayAudioDuration is probed by EncodeOptionsView right after a file
+    // is picked, since only ContentView has the queued job's own duration to
+    // compare it against.
+    @State private var soundlayEnabled: Bool = false
+    @State private var soundlayAudioURL: URL? = nil
+    @State private var soundlayAudioDuration: Double? = nil
+
     private var canStart: Bool {
         !queue.isRunning &&
         !queue.jobs.isEmpty &&
         queue.jobs.contains(where: { $0.status == .waiting }) &&
         optionsValid &&
         collidingJobs.isEmpty &&
-        pendingDurationJobs.isEmpty
+        pendingDurationJobs.isEmpty &&
+        !soundlayTooManyJobs
+    }
+
+    // Soundlay only makes sense against a single file — a batch would mean
+    // applying the same one audio file to every video in it.
+    private var soundlayTooManyJobs: Bool {
+        soundlayEnabled && queue.jobs.count > 1
+    }
+
+    // Just a warning, not blocking — PresetConfig end-aligns automatically
+    // either way (see PresetConfig.soundlayFilterAndMapArguments).
+    private var soundlayDurationMismatch: Bool {
+        guard soundlayEnabled, queue.jobs.count == 1,
+              let audioDuration = soundlayAudioDuration,
+              let videoDuration = queue.jobs.first?.sourceDurationSeconds else { return false }
+        return abs(videoDuration - audioDuration) > 0.05
     }
 
     private var isTranscribePreset: Bool {
@@ -171,6 +196,9 @@ struct ContentView: View {
                         outputFileName: $outputFileName,
                         outputSuffix: $outputSuffix,
                         frameIOProject: $frameIOProject,
+                        soundlayEnabled: $soundlayEnabled,
+                        soundlayAudioURL: $soundlayAudioURL,
+                        soundlayAudioDuration: $soundlayAudioDuration,
                         onReset: resetAll
                     )
 
@@ -214,6 +242,12 @@ struct ContentView: View {
                         HStack {
                             Text("Queue").font(.headline)
                             Spacer()
+                            if !completedOutputFilenames.isEmpty {
+                                Button("Copy filenames") { copyCompletedFilenames() }
+                                    .buttonStyle(.plain)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             if !queue.jobs.isEmpty {
                                 Button("Clear completed") { queue.removeCompleted() }
                                     .buttonStyle(.plain)
@@ -277,6 +311,28 @@ struct ContentView: View {
                 Divider()
                 Label(
                     "\(belowMinimumBitrateJobs.count) file\(belowMinimumBitrateJobs.count == 1 ? "" : "s") require a bitrate below \(String(format: "%.1f", PresetConfig.recommendedMinimumMbps)) Mbps to hit this target — quality may suffer.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            }
+
+            if soundlayTooManyJobs {
+                Divider()
+                Label(
+                    "Soundlay only supports a single file — remove extra files from the queue, or turn Soundlay off.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            } else if soundlayDurationMismatch {
+                Divider()
+                Label(
+                    "Soundlay audio duration doesn't match the video — audio will be aligned to end together.",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.caption)
@@ -375,6 +431,20 @@ struct ContentView: View {
         return handled
     }
 
+    // Output filenames (not full paths), not source filenames — "encoded
+    // files" means what was actually produced. Excludes VidChecker jobs,
+    // which are also .complete but never produce a real output file.
+    private var completedOutputFilenames: [String] {
+        queue.jobs
+            .filter { $0.status == .complete && !$0.isVidCheckerJob }
+            .map { $0.outputURL.lastPathComponent }
+    }
+
+    private func copyCompletedFilenames() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(completedOutputFilenames.joined(separator: "\n"), forType: .string)
+    }
+
     // Preset settings no longer need resetting here — reselecting a preset (or
     // the "Discard Edits" action in EncodeOptionsView) already reloads its
     // canonical stored settings. This just clears the queue and output naming.
@@ -384,6 +454,9 @@ struct ContentView: View {
         outputFileName    = ""
         outputSuffix      = ""
         frameIOProject    = nil
+        soundlayEnabled   = false
+        soundlayAudioURL  = nil
+        soundlayAudioDuration = nil
         queue.clear()
     }
 
@@ -395,7 +468,8 @@ struct ContentView: View {
             outputDirectory: outDir,
             outputFileName: outputFileName.trimmingCharacters(in: .whitespaces),
             outputSuffix: outputSuffix.trimmingCharacters(in: .whitespaces),
-            frameIOProject: frameIOProject
+            frameIOProject: frameIOProject,
+            soundlayAudioURL: soundlayEnabled ? soundlayAudioURL : nil
         )
     }
 }

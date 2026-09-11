@@ -9,6 +9,9 @@ struct EncodeOptionsView: View {
     @Binding var outputFileName: String
     @Binding var outputSuffix: String
     @Binding var frameIOProject: FrameIOProjectOption?
+    @Binding var soundlayEnabled: Bool
+    @Binding var soundlayAudioURL: URL?
+    @Binding var soundlayAudioDuration: Double?
     var onReset: () -> Void
 
     @State private var showSaveAsSheet = false
@@ -228,6 +231,96 @@ struct EncodeOptionsView: View {
         }
     }
 
+    // Sits at the bottom of the Audio column (both h264Columns and
+    // proResColumns) below the codec/bitrate/sample-rate fields — Mute is
+    // itself an audio option (same settings.muted the "Audio" column header
+    // already toggles by click; this just gives it an explicit, discoverable
+    // checkbox too), so it stays outside the .disabled(muted) block those
+    // fields live in. The Divider here is unadorned (no horizontal padding),
+    // so — sitting inside this column's own VStack rather than the HStack
+    // between columns — it only splits the right-hand side, not the full row.
+    private func muteAndTimecodeSection(_ settings: Binding<StructuredSettings>) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            soundlayRow(settings)
+            Toggle("Mute", isOn: muteToggleBinding(settings))
+                .toggleStyle(.checkbox)
+                .font(.callout)
+            Divider()
+            Toggle("Timecode Track", isOn: settings.includeTimecodeTrack)
+                .toggleStyle(.checkbox)
+                .font(.callout)
+        }
+    }
+
+    // Mute and Soundlay are contradictory (one says "no audio", the other
+    // says "use this specific audio") — each turning on forces the other off.
+    private func muteToggleBinding(_ settings: Binding<StructuredSettings>) -> Binding<Bool> {
+        Binding(
+            get: { settings.wrappedValue.muted },
+            set: { newValue in
+                settings.wrappedValue.muted = newValue
+                if newValue { soundlayEnabled = false }
+            }
+        )
+    }
+
+    // MARK: - Soundlay
+
+    private func soundlayToggleBinding(_ settings: Binding<StructuredSettings>) -> Binding<Bool> {
+        Binding(
+            get: { soundlayEnabled },
+            set: { newValue in
+                soundlayEnabled = newValue
+                if newValue {
+                    settings.wrappedValue.muted = false
+                } else {
+                    soundlayAudioURL = nil
+                    soundlayAudioDuration = nil
+                }
+            }
+        )
+    }
+
+    private func soundlayRow(_ settings: Binding<StructuredSettings>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Toggle("Soundlay", isOn: soundlayToggleBinding(settings))
+                    .toggleStyle(.checkbox)
+                    .font(.callout)
+                if soundlayEnabled {
+                    Button("Select Audio") { chooseSoundlayAudio() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+            if soundlayEnabled {
+                Text(soundlayAudioURL?.lastPathComponent ?? "No file selected")
+                    .font(.caption)
+                    .foregroundStyle(soundlayAudioURL == nil ? .red : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+    }
+
+    private func chooseSoundlayAudio() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.audio]
+        panel.prompt = "Select"
+        guard panel.runModal() == .OK, let url = panel.urls.first else { return }
+        soundlayAudioURL = url
+        soundlayAudioDuration = nil
+        DispatchQueue.global(qos: .utility).async {
+            let duration = PresetConfig.duration(url)
+            DispatchQueue.main.async {
+                soundlayAudioDuration = duration > 0 ? duration : nil
+            }
+        }
+    }
+
     // MARK: - Transcribe SRTs note
 
     private var transcribeNote: some View {
@@ -303,6 +396,8 @@ struct EncodeOptionsView: View {
                 }
                 .disabled(settings.wrappedValue.muted)
                 .opacity(settings.wrappedValue.muted ? 0.4 : 1)
+
+                muteAndTimecodeSection(settings)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -351,6 +446,8 @@ struct EncodeOptionsView: View {
                 }
                 .disabled(settings.wrappedValue.muted)
                 .opacity(settings.wrappedValue.muted ? 0.4 : 1)
+
+                muteAndTimecodeSection(settings)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -968,7 +1065,7 @@ struct EncodeOptionsView: View {
     }
 
     private var previewString: String {
-        PresetConfig.previewString(for: workingPreset)
+        PresetConfig.previewString(for: workingPreset, soundlayAudioURL: soundlayEnabled ? soundlayAudioURL : nil)
     }
 
     private func resolutionLabel(_ res: Resolution) -> AttributedString {

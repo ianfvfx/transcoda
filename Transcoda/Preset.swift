@@ -63,8 +63,15 @@ struct StructuredSettings: Codable, Equatable {
     // Shared by both codec families. When true, all audio options are
     // disabled and the output has no audio track at all (-an) instead of the
     // usual -c:a/-b:a/-ar/-ac flags. Toggled via clicking the "Audio" column
-    // header in EncodeOptionsView.
+    // header in EncodeOptionsView, or the "Mute" checkbox.
     var muted: Bool = false
+
+    // Shared by both codec families. Defaults to true (existing/passthrough
+    // behavior: the source's own timecode carries through to a tmcd track
+    // unchanged). False explicitly strips it — see
+    // PresetConfig.structuredArguments for why that needs more than just
+    // omitting -timecode.
+    var includeTimecodeTrack: Bool = true
 
     // Explicit memberwise init — required once a custom init(from:) exists
     // below, since Swift only auto-generates the memberwise initializer when
@@ -76,7 +83,7 @@ struct StructuredSettings: Codable, Equatable {
          proResCodec: ProResCodec, audioSampleSize: AudioSampleSize, audioSampleRate: SampleRate,
          trimStartSeconds: String = "", maxFileSizeMB: String = "",
          customWidth: String = "", customHeight: String = "", customFramerate: String = "",
-         muted: Bool = false) {
+         muted: Bool = false, includeTimecodeTrack: Bool = true) {
         self.codecFamily = codecFamily
         self.resolution = resolution
         self.framerate = framerate
@@ -93,12 +100,14 @@ struct StructuredSettings: Codable, Equatable {
         self.customHeight = customHeight
         self.customFramerate = customFramerate
         self.muted = muted
+        self.includeTimecodeTrack = includeTimecodeTrack
     }
 
     private enum CodingKeys: String, CodingKey {
         case codecFamily, resolution, framerate, scan, bitrateMbps, audioCodec, audioBitrate
         case proResCodec, audioSampleSize, audioSampleRate
         case trimStartSeconds, maxFileSizeMB, customWidth, customHeight, customFramerate, muted
+        case includeTimecodeTrack
     }
 
     // Custom decoder: the first 10 fields have been there since presets became
@@ -126,6 +135,7 @@ struct StructuredSettings: Codable, Equatable {
         customHeight     = try container.decodeIfPresent(String.self, forKey: .customHeight) ?? ""
         customFramerate  = try container.decodeIfPresent(String.self, forKey: .customFramerate) ?? ""
         muted            = try container.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+        includeTimecodeTrack = try container.decodeIfPresent(Bool.self, forKey: .includeTimecodeTrack) ?? true
     }
 
     // Used both as the Bitrate field's placeholder and as the actual fallback

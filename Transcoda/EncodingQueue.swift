@@ -82,7 +82,8 @@ class EncodingQueue: ObservableObject {
                outputDirectory: URL?,
                outputFileName: String,
                outputSuffix: String,
-               frameIOProject: FrameIOProjectOption? = nil) {
+               frameIOProject: FrameIOProjectOption? = nil,
+               soundlayAudioURL: URL? = nil) {
         guard !isRunning else { return }
 
         let batchID = UUID()
@@ -95,6 +96,7 @@ class EncodingQueue: ObservableObject {
             job.outputDirectory = outputDirectory
             job.customFileName  = outputFileName
             job.customSuffix    = outputSuffix
+            job.soundlayAudioURL = soundlayAudioURL
 
             job.frameIOUploadEnabled = frameIOProject != nil
             job.frameIOAccountID     = frameIOProject?.accountID
@@ -215,7 +217,8 @@ class EncodingQueue: ObservableObject {
                 preset: job.preset,
                 inputURL: job.inputURL,
                 input: job.inputURL.path,
-                output: job.outputURL.path
+                output: job.outputURL.path,
+                soundlayAudioURL: job.soundlayAudioURL
             )
 
             let pipe = Pipe()

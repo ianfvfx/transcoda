@@ -60,6 +60,12 @@ class EncodingJob: ObservableObject, Identifiable {
     var frameIOBatchID: UUID?
     @Published var uploadStatus: FrameIOUploadStatus = .none
 
+    // Soundlay — stamped at encode time like the fields above, but never part
+    // of Preset/StructuredSettings itself: a specific audio file is a
+    // one-off per-session choice, not a reusable encode setting (unlike Mute/
+    // Timecode Track, which are genuinely part of the preset).
+    var soundlayAudioURL: URL?
+
     init(inputURL: URL, sourceRelativeDirectory: String? = nil) {
         self.inputURL = inputURL
         self.sourceRelativeDirectory = sourceRelativeDirectory

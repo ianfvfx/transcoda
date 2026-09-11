@@ -285,10 +285,10 @@ enum PresetConfig {
     // ffprobe. Pass nil for preview/display purposes (no real file to probe yet) —
     // `.autoDetect` is then treated as non-interlaced for display only.
 
-    static func arguments(preset: Preset, inputURL: URL?, input: String, output: String) -> [String] {
+    static func arguments(preset: Preset, inputURL: URL?, input: String, output: String, soundlayAudioURL: URL? = nil) -> [String] {
         switch preset.kind {
         case .structured(let settings):
-            return structuredArguments(settings: settings, inputURL: inputURL, input: input, output: output)
+            return structuredArguments(settings: settings, inputURL: inputURL, input: input, output: output, soundlayAudioURL: soundlayAudioURL)
         case .advanced(let rawTemplate):
             return tokenize(rawTemplate, input: input, output: output)
         case .transcribe, .vidchecker:
@@ -308,17 +308,17 @@ enum PresetConfig {
         return [scriptPath, input, output]
     }
 
-    static func previewString(for preset: Preset) -> String {
+    static func previewString(for preset: Preset, soundlayAudioURL: URL? = nil) -> String {
         if case .transcribe = preset.kind {
             let args = transcribeArguments(input: "<input>", output: "<output>.srt")
             guard !args.isEmpty else { return "transcribeSRTs.py not found in app bundle" }
             return ([transcribePythonPath] + args).joined(separator: " ")
         }
-        let args = arguments(preset: preset, inputURL: nil, input: "<input>", output: "<output>.\(preset.outputExtension)")
+        let args = arguments(preset: preset, inputURL: nil, input: "<input>", output: "<output>.\(preset.outputExtension)", soundlayAudioURL: soundlayAudioURL)
         return "ffmpeg " + args.joined(separator: " ")
     }
 
-    private static func structuredArguments(settings: StructuredSettings, inputURL: URL?, input: String, output: String) -> [String] {
+    private static func structuredArguments(settings: StructuredSettings, inputURL: URL?, input: String, output: String, soundlayAudioURL: URL? = nil) -> [String] {
         let interlaced: Bool
         switch settings.scan {
         case .interlacedTFF: interlaced = true
@@ -331,6 +331,31 @@ enum PresetConfig {
         let trimValue = Double(trimmedStart)
         if let trimValue, trimValue > 0 { args += ["-ss", trimmedStart] }
         args += ["-i", input]
+
+        // Soundlay's audio file is a second input — trimmed identically to the
+        // video (same -ss) on the assumption its own timeline matches the
+        // UNTRIMMED video, so both stay in sync after trimming.
+        if let soundlayAudioURL {
+            if let trimValue, trimValue > 0 { args += ["-ss", trimmedStart] }
+            args += ["-i", soundlayAudioURL.path]
+        }
+
+        // Explicit video mapping is required whenever there's more than one
+        // input to disambiguate (soundlay) or the timecode track is being
+        // dropped — by default ffmpeg's mov/mxf muxers regenerate a tmcd
+        // track from the source video stream's own "timecode" metadata tag
+        // even if that data stream itself isn't copied, so the tag itself has
+        // to be cleared too (confirmed by direct testing; -map_metadata -1
+        // alone works but wipes every other metadata tag along with it, not
+        // just the timecode).
+        let needsExplicitMapping = soundlayAudioURL != nil || !settings.includeTimecodeTrack
+        if needsExplicitMapping {
+            args += ["-map", "0:v:0"]
+            if !settings.includeTimecodeTrack {
+                args += ["-map_metadata:s:v:0", "-1:s:v:0"]
+            }
+        }
+
         var vfFilters = [String]()
         if interlaced { vfFilters.append("setfield=tff") }
         if let res = customResolutionValue(settings) ?? settings.resolution.ffmpegValue {
@@ -347,6 +372,18 @@ enum PresetConfig {
         if interlaced { args += ["-flags", "+ildct+ilme"] }
         let effectiveFramerate = customFramerateValue(settings) ?? settings.framerate.ffmpegValue
         if let fr = effectiveFramerate { args += ["-r", fr] }
+
+        // Which physical stream actually becomes "the audio" — orthogonal to
+        // audioArguments(for:) below, which only picks codec/bitrate/etc. and
+        // knows nothing about where the samples come from.
+        if let soundlayAudioURL {
+            args += soundlayFilterAndMapArguments(soundlayAudioURL: soundlayAudioURL, inputURL: inputURL)
+        } else if needsExplicitMapping, !settings.muted {
+            // Timecode-off only, no soundlay — map the source's own audio
+            // explicitly (mirrors the video map above); "?" tolerates a
+            // source with no audio stream at all.
+            args += ["-map", "0:a:0?"]
+        }
 
         switch settings.codecFamily {
         case .h264Mp4:
@@ -391,7 +428,7 @@ enum PresetConfig {
             args += ["-f", "mov"]
         }
 
-        if let trimValue, trimValue > 0, let inputURL {
+        if settings.includeTimecodeTrack, let trimValue, trimValue > 0, let inputURL {
             if let newTC = shiftedTimecode(inputURL: inputURL, trimSeconds: trimValue, framerateOverride: effectiveFramerate) {
                 args += ["-timecode", newTC]
             }
@@ -399,6 +436,43 @@ enum PresetConfig {
 
         args += ["-progress", "pipe:1", output]
         return args
+    }
+
+    // MARK: - Soundlay audio mapping
+    //
+    // Confirmed by direct testing: ffmpeg's adelay (pad silence onto the
+    // front) and atrim+asetpts (cut the front off) filters correctly
+    // end-align a shorter/longer audio file against the video's own length —
+    // both verified to produce matching stream durations. A ~50ms difference
+    // is treated as "matching" (encoder/container rounding noise, not a real
+    // mismatch worth padding/trimming for).
+    private static let soundlayMatchToleranceSeconds = 0.05
+
+    private static func soundlayFilterAndMapArguments(soundlayAudioURL: URL, inputURL: URL?) -> [String] {
+        // Preview only (no real files to measure) — shown for display, not
+        // valid ffmpeg syntax, matching Max File Size's "<calculated>" preview.
+        guard let inputURL else {
+            return ["-filter_complex", "[1:a]<end-aligned to video length>[aout]", "-map", "[aout]"]
+        }
+
+        let videoDuration = duration(inputURL)
+        let audioDuration = duration(soundlayAudioURL)
+        let diff = videoDuration - audioDuration
+
+        if abs(diff) < soundlayMatchToleranceSeconds {
+            return ["-map", "1:a:0"]
+        } else if diff > 0 {
+            // Audio shorter than video — pad silence onto its front so it
+            // ends exactly when the video does (e.g. video has a pre-roll
+            // the audio doesn't cover).
+            let delayMs = Int((diff * 1000).rounded())
+            return ["-filter_complex", "[1:a]adelay=\(delayMs):all=1[aout]", "-map", "[aout]"]
+        } else {
+            // Audio longer than video — trim the excess off its front so
+            // what remains still ends when the video does.
+            let trimStart = -diff
+            return ["-filter_complex", "[1:a]atrim=start=\(trimStart),asetpts=PTS-STARTPTS[aout]", "-map", "[aout]"]
+        }
     }
 
     // MARK: - Raw-template tokenizer (advanced presets)

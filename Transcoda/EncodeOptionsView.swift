@@ -459,9 +459,13 @@ struct EncodeOptionsView: View {
         case sameAsSource, downloads, desktop, other
     }
 
-    private var downloadsURL: URL {
+    // Static so ContentView can also reach downloadsURL for its default
+    // output location, without duplicating the FileManager lookup.
+    static var downloadsURL: URL {
         FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
     }
+
+    private var downloadsURL: URL { Self.downloadsURL }
 
     private var desktopURL: URL {
         FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!

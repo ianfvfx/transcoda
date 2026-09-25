@@ -10,8 +10,10 @@ struct ContentView: View {
     // reselecting the current one) always reloads a fresh canonical copy from
     // presetStore, discarding any unsaved edits — see EncodeOptionsView.
     @State private var workingPreset: Preset   = BuiltInPresets.mp4
-    @State private var useCustomOutput: Bool   = false
-    @State private var outputDirectory: URL?   = nil
+    // Downloads is the default output location for every preset — Same as
+    // Source needs an explicit opt-in via the Output section's toggles.
+    @State private var useCustomOutput: Bool   = true
+    @State private var outputDirectory: URL?   = EncodeOptionsView.downloadsURL
     @State private var outputFileName: String  = ""
     @State private var outputSuffix: String    = ""
     @State private var isDropTargeted: Bool     = false
@@ -449,8 +451,8 @@ struct ContentView: View {
     // the "Discard Edits" action in EncodeOptionsView) already reloads its
     // canonical stored settings. This just clears the queue and output naming.
     private func resetAll() {
-        useCustomOutput   = false
-        outputDirectory   = nil
+        useCustomOutput   = true
+        outputDirectory   = EncodeOptionsView.downloadsURL
         outputFileName    = ""
         outputSuffix      = ""
         frameIOProject    = nil

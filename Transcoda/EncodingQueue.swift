@@ -331,14 +331,24 @@ class EncodingQueue: ObservableObject {
     // .failed (red), Passed/Warning map to .complete (green) — the actual
     // CheckResult name is what's shown in the row (see EncodingJob.statusLabel).
     private func submitVidCheckerTask(job: EncodingJob, templateId: Int?, completion: @escaping () -> Void) {
+        // completion() must stay inside the dispatched block here, not called
+        // synchronously right after it — see the identical stack-overflow fix
+        // in encode()'s audio-rejection guard for the full explanation. A
+        // queue with several files all hitting one of these two guards would
+        // otherwise recurse encode -> completion -> encodeNext -> encode
+        // synchronously on the same stack with no async break.
         guard let templateId else {
-            DispatchQueue.main.async { job.status = .failed("No Vidchecker template selected") }
-            completion()
+            DispatchQueue.main.async {
+                job.status = .failed("No Vidchecker template selected")
+                completion()
+            }
             return
         }
         guard let uncPath = Self.convertToVidCheckerPath(job.inputURL) else {
-            DispatchQueue.main.async { job.status = .failed("File must be on the jobs share (/Volumes/jobs) to submit to Vidchecker") }
-            completion()
+            DispatchQueue.main.async {
+                job.status = .failed("File must be on the jobs share (/Volumes/jobs) to submit to Vidchecker")
+                completion()
+            }
             return
         }
 

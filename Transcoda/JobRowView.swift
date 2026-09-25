@@ -256,6 +256,7 @@ struct JobRowView: View {
         }
         .padding(20)
         .frame(width: 480, height: 420)
+        .textSelection(.enabled)
     }
 
     private func vidCheckerAlertRow(_ alert: VidCheckerAlert) -> some View {
@@ -264,23 +265,27 @@ struct JobRowView: View {
                 .foregroundStyle(vidCheckerAlertColor(alert.level))
                 .frame(width: 16)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(alert.type ?? "Alert")
-                        .font(.callout.weight(.semibold))
-                    if let beginSeconds = alert.beginSeconds {
-                        Text(vidCheckerTimecode(beginSeconds))
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                if let detail = alert.detail {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            // A separate Text per line is each its own independent selection
+            // unit even under .textSelection(.enabled) — SwiftUI can't drag-
+            // select across them. Concatenating with + keeps each portion's
+            // own styling but produces one Text, so heading, timecode, and
+            // detail all select/copy together as one continuous block.
+            combinedAlertText(alert)
         }
+    }
+
+    private func combinedAlertText(_ alert: VidCheckerAlert) -> Text {
+        var heading = Text(alert.type ?? "Alert")
+            .font(.callout.weight(.semibold))
+        if let beginSeconds = alert.beginSeconds {
+            heading = heading + Text("  " + vidCheckerTimecode(beginSeconds))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        guard let detail = alert.detail else { return heading }
+        return heading + Text("\n" + detail)
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 
     private func vidCheckerAlertIcon(_ level: VidCheckerAlertLevel?) -> String {

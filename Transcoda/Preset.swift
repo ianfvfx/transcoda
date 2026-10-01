@@ -187,6 +187,13 @@ enum PresetKind: Codable, Equatable {
     // using the given template. templateId is nil until one is picked in the
     // UI; Submit stays disabled until it's set (see ContentView.optionsValid).
     case vidchecker(templateId: Int?)
+    // No encode of its own and no per-file queue at all — a single
+    // long-running utility that watches a folder, uploads new arrivals to
+    // Frame.io (encoding video first, images as-is), and emails a review
+    // link. Config (watch path, project, emails, run-for duration) lives as
+    // transient ContentView session state, not here, since there's only
+    // ever one active watch — see AutoFrameIOSession.
+    case autoFrameIO
 }
 
 // MARK: - Preset

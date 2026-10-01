@@ -105,5 +105,14 @@ enum BuiltInPresets {
         outputSuffix: ""
     )
 
-    static let all: [Preset] = [mp4, proRes, clearcastMP4, clearcastProRes, extremeReach, peach, transcribeSRTs, vidChecker]
+    static let autoFrameIO = Preset(
+        id: UUID(uuidString: "8F2C1A00-0001-4000-8000-000000000009")!,
+        name: "AutoFrameIO",
+        origin: .builtIn,
+        kind: .autoFrameIO,
+        outputExtension: "",
+        outputSuffix: ""
+    )
+
+    static let all: [Preset] = [mp4, proRes, clearcastMP4, clearcastProRes, extremeReach, peach, transcribeSRTs, vidChecker, autoFrameIO]
 }

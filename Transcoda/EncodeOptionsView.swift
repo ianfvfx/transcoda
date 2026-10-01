@@ -12,6 +12,15 @@ struct EncodeOptionsView: View {
     @Binding var soundlayEnabled: Bool
     @Binding var soundlayAudioURL: URL?
     @Binding var soundlayAudioDuration: Double?
+    // AutoFrameIO session config — lives in ContentView (like the output
+    // location fields) since there's only ever one active watch. Fields are
+    // disabled while a watch is running; Activate/Deactivate itself lives in
+    // ContentView's bottom bar, not here.
+    @Binding var autoFrameIOWatchPath: URL?
+    @Binding var autoFrameIOProject: FrameIOProjectOption?
+    @Binding var autoFrameIOEmails: String
+    @Binding var autoFrameIORunForHours: String
+    var autoFrameIOActive: Bool
     var onReset: () -> Void
 
     @State private var showSaveAsSheet = false
@@ -30,6 +39,15 @@ struct EncodeOptionsView: View {
     @State private var frameIOAuthBusy = false
     @State private var frameIOErrorMessage: String?
 
+    // Transient AutoFrameIO project-picker UI state — separate from the
+    // per-job Frame.io upload state above so toggling that off can't clobber
+    // AutoFrameIO's own chosen project. Re-fetched only when explicitly
+    // requested (via the Connect/Refresh button), not automatically on
+    // preset selection, so switching to AutoFrameIO in the dropdown never
+    // pops a sign-in prompt by itself.
+    @State private var autoFrameIOAvailableProjects: [FrameIOProjectOption] = []
+    @State private var autoFrameIOAuthBusy = false
+
     // Transient VidChecker UI state — fetched once per session the first
     // time the VidChecker preset is selected (no auth step, unlike Frame.io,
     // so there's no reason to defer it to a checkbox tick).
@@ -40,7 +58,7 @@ struct EncodeOptionsView: View {
     var body: some View {
         VStack(spacing: 12) {
             optionsBox
-            if !isVidCheckerPreset {
+            if !isVidCheckerPreset && !isAutoFrameIOPreset {
                 ffmpegPreviewBox
             }
         }
@@ -98,13 +116,16 @@ struct EncodeOptionsView: View {
                     transcribeNote
                 case .vidchecker:
                     vidCheckerTemplateRow
+                case .autoFrameIO:
+                    autoFrameIOConfigRows
                 }
 
-                // VidChecker has no output settings at all — it produces no
-                // local file, so there's nothing for File Name/Suffix/folder
-                // location to apply to. The template picker above is the
-                // only thing this preset needs.
-                if !isVidCheckerPreset {
+                // VidChecker and AutoFrameIO have no output settings at all —
+                // neither produces a local file the normal way (AutoFrameIO's
+                // encode destination is the fixed ~/Downloads/AutoFrameIO
+                // path, never user-chosen), so there's nothing for File
+                // Name/Suffix/folder location to apply to.
+                if !isVidCheckerPreset && !isAutoFrameIOPreset {
                     Divider()
                     outputSection
                 }
@@ -590,6 +611,11 @@ struct EncodeOptionsView: View {
         return false
     }
 
+    private var isAutoFrameIOPreset: Bool {
+        if case .autoFrameIO = workingPreset.kind { return true }
+        return false
+    }
+
     // Built-ins split into two picker sections by kind — exhaustive switches
     // so a future new PresetKind case forces a decision here rather than
     // silently vanishing from both groups.
@@ -597,7 +623,7 @@ struct EncodeOptionsView: View {
         presetStore.builtIns.filter {
             switch $0.kind {
             case .structured, .advanced: return true
-            case .transcribe, .vidchecker: return false
+            case .transcribe, .vidchecker, .autoFrameIO: return false
             }
         }
     }
@@ -605,7 +631,7 @@ struct EncodeOptionsView: View {
     private var utilityPresets: [Preset] {
         presetStore.builtIns.filter {
             switch $0.kind {
-            case .transcribe, .vidchecker: return true
+            case .transcribe, .vidchecker, .autoFrameIO: return true
             case .structured, .advanced: return false
             }
         }
@@ -667,6 +693,150 @@ struct EncodeOptionsView: View {
                     vidCheckerTemplates = templates.sorted { $0.name < $1.name }
                 case .failure(let error):
                     vidCheckerLoadError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    // MARK: - AutoFrameIO
+
+    private var autoFrameIOConfigRows: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Watches a folder, uploads new files to Frame.io (encoding video, images as-is), and emails a review link.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Text("Watch Path")
+                    .frame(width: 90, alignment: .leading)
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                Text(autoFrameIOWatchPath?.path ?? "No folder selected")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(autoFrameIOWatchPath == nil ? .red : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                Button("Choose…") { chooseAutoFrameIOWatchPath() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+
+            HStack(spacing: 8) {
+                Text("Frame.io Project")
+                    .frame(width: 90, alignment: .leading)
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+
+                if autoFrameIOAuthBusy {
+                    ProgressView().controlSize(.small)
+                } else if autoFrameIOAvailableProjects.isEmpty {
+                    Button("Connect to Frame.io") { beginAutoFrameIOAuthAndFetch() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                } else {
+                    Picker("", selection: autoFrameIOProjectSelectionBinding) {
+                        ForEach(autoFrameIOAvailableProjects) { option in
+                            Text(option.project.name).tag(option.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: 220)
+                    Button("Refresh") { beginAutoFrameIOAuthAndFetch() }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(alignment: .top, spacing: 8) {
+                Text("Email(s)")
+                    .frame(width: 90, alignment: .leading)
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                VStack(alignment: .leading, spacing: 3) {
+                    TextField("BK usernames or email addresses. Comma separated", text: $autoFrameIOEmails)
+                        .textFieldStyle(.roundedBorder)
+                    if !autoFrameIOResolvedEmails.isEmpty {
+                        Text("Will notify: \(autoFrameIOResolvedEmails.joined(separator: ", "))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                Text("Run for (hours)")
+                    .frame(width: 90, alignment: .leading)
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                TextField("Blank = until Transcoda is closed", text: $autoFrameIORunForHours)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+            }
+        }
+        .disabled(autoFrameIOActive)
+        .opacity(autoFrameIOActive ? 0.6 : 1)
+        .padding(.vertical, 4)
+    }
+
+    // A bare username with no "@" is resolved to a Black Kite address, e.g.
+    // "ian, tony@blackkitestudios.com" -> ["ian@blackkitestudios.com", "tony@blackkitestudios.com"].
+    // Preview-only here; ContentView.autoFrameIOEmailAddresses applies the
+    // identical resolution to what's actually used to notify on Activate.
+    private var autoFrameIOResolvedEmails: [String] {
+        autoFrameIOEmails
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { $0.contains("@") ? $0 : "\($0)@blackkitestudios.com" }
+    }
+
+    private var autoFrameIOProjectSelectionBinding: Binding<String> {
+        Binding(
+            get: { autoFrameIOProject?.id ?? "" },
+            set: { newID in
+                autoFrameIOProject = autoFrameIOAvailableProjects.first { $0.id == newID }
+            }
+        )
+    }
+
+    private func chooseAutoFrameIOWatchPath() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK { autoFrameIOWatchPath = panel.urls.first }
+    }
+
+    // Deliberately not triggered automatically on preset selection (unlike
+    // VidChecker's template fetch, which needs no auth) — an unexpected
+    // sign-in prompt just from browsing the preset dropdown would be a bad
+    // surprise. Only the explicit Connect/Refresh button triggers this.
+    private func beginAutoFrameIOAuthAndFetch() {
+        autoFrameIOAuthBusy = true
+        Task { @MainActor in
+            FrameIOAuthManager.shared.ensureAuthenticated { result in
+                switch result {
+                case .failure(let error):
+                    DispatchQueue.main.async {
+                        autoFrameIOAuthBusy = false
+                        frameIOErrorMessage = error.localizedDescription
+                    }
+                case .success:
+                    FrameIOAPIClient.shared.fetchAccessibleProjects { result in
+                        DispatchQueue.main.async {
+                            autoFrameIOAuthBusy = false
+                            switch result {
+                            case .failure(let error):
+                                frameIOErrorMessage = error.localizedDescription
+                            case .success(let projects):
+                                autoFrameIOAvailableProjects = projects
+                                if autoFrameIOProject == nil { autoFrameIOProject = projects.first }
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -291,11 +291,13 @@ enum PresetConfig {
             return structuredArguments(settings: settings, inputURL: inputURL, input: input, output: output, soundlayAudioURL: soundlayAudioURL)
         case .advanced(let rawTemplate):
             return tokenize(rawTemplate, input: input, output: output)
-        case .transcribe, .vidchecker:
+        case .transcribe, .vidchecker, .autoFrameIO:
             // Never actually invoked in practice — EncodingQueue and
             // previewString both branch on preset.kind before reaching here,
-            // since neither a transcribe nor a VidChecker job runs ffmpeg at
-            // all. Present only so this switch stays exhaustive.
+            // since neither a transcribe, VidChecker, nor AutoFrameIO job
+            // runs ffmpeg through this path (AutoFrameIO uses its own fixed
+            // encode spec — see AutoFrameIOConstants). Present only so this
+            // switch stays exhaustive.
             return []
         }
     }

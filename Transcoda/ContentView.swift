@@ -31,6 +31,19 @@ struct ContentView: View {
     @State private var soundlayAudioURL: URL? = nil
     @State private var soundlayAudioDuration: Double? = nil
 
+    // AutoFrameIO — unpersisted session config, single active watch at a
+    // time. autoFrameIOWatcher/Session are only non-nil while active; both
+    // are torn down (and monitoring stops) on Deactivate or on quit.
+    @State private var autoFrameIOWatchPath: URL? = nil
+    @State private var autoFrameIOProject: FrameIOProjectOption? = nil
+    @State private var autoFrameIOEmails: String = ""
+    @State private var autoFrameIORunForHours: String = ""
+    @State private var autoFrameIOActive: Bool = false
+    @State private var autoFrameIOStatusLines: [String] = []
+    @State private var autoFrameIOWatcher: AutoFrameIOWatcher? = nil
+    @State private var autoFrameIOSession: AutoFrameIOSession? = nil
+    @State private var autoFrameIORunForTimer: Timer? = nil
+
     private var canStart: Bool {
         !queue.isRunning &&
         !queue.jobs.isEmpty &&
@@ -64,6 +77,40 @@ struct ContentView: View {
     private var isVidCheckerPreset: Bool {
         if case .vidchecker = workingPreset.kind { return true }
         return false
+    }
+
+    private var isAutoFrameIOPreset: Bool {
+        if case .autoFrameIO = workingPreset.kind { return true }
+        return false
+    }
+
+    // A bare username with no "@" is resolved to a Black Kite address, e.g.
+    // "ian, tony@blackkitestudios.com" -> ["ian@blackkitestudios.com", "tony@blackkitestudios.com"].
+    // Mirrored (preview-only) in EncodeOptionsView.autoFrameIOResolvedEmails.
+    private var autoFrameIOEmailAddresses: [String] {
+        autoFrameIOEmails
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { $0.contains("@") ? $0 : "\($0)@blackkitestudios.com" }
+    }
+
+    private var autoFrameIORunForHoursValue: Double? {
+        let trimmed = autoFrameIORunForHours.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        return Double(trimmed)
+    }
+
+    private var autoFrameIOCanActivate: Bool {
+        guard !autoFrameIOActive,
+              autoFrameIOWatchPath != nil,
+              autoFrameIOProject != nil,
+              !autoFrameIOEmailAddresses.isEmpty else { return false }
+        let trimmed = autoFrameIORunForHours.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty {
+            guard let hours = Double(trimmed), hours > 0 else { return false }
+        }
+        return true
     }
 
     private var actionButtonLabel: String {
@@ -186,23 +233,49 @@ struct ContentView: View {
         return PresetConfig.estimatedOutputBytes(preset: effective, sourceDurationSeconds: duration)
     }
 
+    // Factored out so both branches of `body` below can use it without
+    // repeating this long parameter list — only one branch is ever active.
+    private var encodeOptionsViewInstance: some View {
+        EncodeOptionsView(
+            workingPreset: $workingPreset,
+            presetStore: presetStore,
+            useCustomOutput: $useCustomOutput,
+            outputDirectory: $outputDirectory,
+            outputFileName: $outputFileName,
+            outputSuffix: $outputSuffix,
+            frameIOProject: $frameIOProject,
+            soundlayEnabled: $soundlayEnabled,
+            soundlayAudioURL: $soundlayAudioURL,
+            soundlayAudioDuration: $soundlayAudioDuration,
+            autoFrameIOWatchPath: $autoFrameIOWatchPath,
+            autoFrameIOProject: $autoFrameIOProject,
+            autoFrameIOEmails: $autoFrameIOEmails,
+            autoFrameIORunForHours: $autoFrameIORunForHours,
+            autoFrameIOActive: autoFrameIOActive,
+            onReset: resetAll
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            if isAutoFrameIOPreset {
+                // Not wrapped in a ScrollView, unlike the encode/queue layout
+                // below — a ScrollView sizes its content to its own intrinsic
+                // height and leaves any leftover space blank rather than
+                // stretching a child to fill it, which is exactly why the
+                // status box used to stop short of the window's bottom edge.
+                // Outside a ScrollView, a plain VStack DOES hand out its
+                // remaining space to a `.frame(maxHeight: .infinity)` child.
+                VStack(spacing: 16) {
+                    encodeOptionsViewInstance
+                    autoFrameIOStatusBox
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(16)
+            } else {
             ScrollView {
                 VStack(spacing: 16) {
-                    EncodeOptionsView(
-                        workingPreset: $workingPreset,
-                        presetStore: presetStore,
-                        useCustomOutput: $useCustomOutput,
-                        outputDirectory: $outputDirectory,
-                        outputFileName: $outputFileName,
-                        outputSuffix: $outputSuffix,
-                        frameIOProject: $frameIOProject,
-                        soundlayEnabled: $soundlayEnabled,
-                        soundlayAudioURL: $soundlayAudioURL,
-                        soundlayAudioDuration: $soundlayAudioDuration,
-                        onReset: resetAll
-                    )
+                    encodeOptionsViewInstance
 
                     GroupBox {
                         ZStack {
@@ -261,6 +334,7 @@ struct ContentView: View {
                     }
                 }
                 .padding(16)
+            }
             }
 
             if customResolutionInvalid {
@@ -346,19 +420,33 @@ struct ContentView: View {
             Divider()
 
             HStack(spacing: 10) {
-                Button("Add Files…") { addFiles() }
-                    .buttonStyle(.bordered)
-                    .disabled(queue.isRunning)
-                Spacer()
-                if queue.isRunning {
-                    Button("Cancel") { queue.cancel() }
-                        .buttonStyle(.bordered)
-                        .tint(.red)
+                if isAutoFrameIOPreset {
+                    Spacer()
+                    Button(autoFrameIOActive ? "Deactivate" : "Activate") {
+                        if autoFrameIOActive {
+                            deactivateAutoFrameIO()
+                        } else {
+                            activateAutoFrameIO()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(autoFrameIOActive ? .red : .accentColor)
+                    .disabled(!autoFrameIOActive && !autoFrameIOCanActivate)
                 } else {
-                    Button(actionButtonLabel) { startEncoding() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!canStart)
-                        .keyboardShortcut(.return, modifiers: .command)
+                    Button("Add Files…") { addFiles() }
+                        .buttonStyle(.bordered)
+                        .disabled(queue.isRunning)
+                    Spacer()
+                    if queue.isRunning {
+                        Button("Cancel") { queue.cancel() }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
+                    } else {
+                        Button(actionButtonLabel) { startEncoding() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!canStart)
+                            .keyboardShortcut(.return, modifiers: .command)
+                    }
                 }
             }
             .padding(.horizontal, 20)
@@ -372,6 +460,41 @@ struct ContentView: View {
                 launchURLs.urls = []
             }
         }
+    }
+
+    // MARK: - AutoFrameIO status
+
+    private var autoFrameIOStatusBox: some View {
+        GroupBox {
+            if autoFrameIOStatusLines.isEmpty {
+                Text("Not watching. Fill in the fields above and press Activate.")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.top, 30)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(autoFrameIOStatusLines.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } label: {
+            HStack {
+                Circle()
+                    .fill(autoFrameIOActive ? Color.green : Color.secondary)
+                    .frame(width: 8, height: 8)
+                Text(autoFrameIOActive ? "Watching" : "Activity").font(.headline)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Empty state
@@ -460,6 +583,82 @@ struct ContentView: View {
         soundlayAudioURL  = nil
         soundlayAudioDuration = nil
         queue.clear()
+
+        // Never clear these while a watch is running — Activate keeps using
+        // whatever config it captured, and blanking the (disabled) fields
+        // out from under it would just be confusing to look at.
+        if !autoFrameIOActive {
+            autoFrameIOWatchPath = nil
+            autoFrameIOProject = nil
+            autoFrameIOEmails = ""
+            autoFrameIORunForHours = ""
+            autoFrameIOStatusLines = []
+        }
+    }
+
+    // MARK: - AutoFrameIO
+
+    private func activateAutoFrameIO() {
+        guard let watchPath = autoFrameIOWatchPath, let project = autoFrameIOProject else { return }
+        let addresses = autoFrameIOEmailAddresses
+
+        let session = AutoFrameIOSession(config: AutoFrameIOSession.Config(
+            watchRoot: watchPath,
+            accountID: project.accountID,
+            projectID: project.project.id,
+            rootFolderID: project.project.rootFolderID,
+            projectName: project.project.name,
+            notifyAddresses: addresses
+        ))
+        session.onEvent = { event in
+            DispatchQueue.main.async {
+                switch event {
+                case .uploaded(let filename, let destination):
+                    autoFrameIOStatusLines.append("Uploaded \(filename) → \(destination)")
+                case .shared(let folderName, let url):
+                    autoFrameIOStatusLines.append("Shared '\(folderName)': \(url)")
+                case .shareFailed(let folderName, let message):
+                    autoFrameIOStatusLines.append("Could not create share for '\(folderName)': \(message)")
+                case .emailSent(let folderName, let sentAddresses):
+                    autoFrameIOStatusLines.append("Emailed '\(folderName)' link to \(sentAddresses.joined(separator: ", "))")
+                case .emailFailed(let folderName, let message):
+                    autoFrameIOStatusLines.append("Share for '\(folderName)' created, but the email failed: \(message)")
+                case .failed(let filename, let message):
+                    autoFrameIOStatusLines.append("Failed: \(filename) — \(message)")
+                }
+            }
+        }
+
+        let watcher = AutoFrameIOWatcher(watchRoot: watchPath, onDetected: { url in
+            DispatchQueue.main.async {
+                autoFrameIOStatusLines.append("Detected \(url.lastPathComponent)")
+            }
+        }, onStableFile: { url in
+            session.handle(fileURL: url)
+        })
+
+        autoFrameIOSession = session
+        autoFrameIOWatcher = watcher
+        autoFrameIOStatusLines = ["Watching \(watchPath.path)…"]
+        autoFrameIOActive = true
+        watcher.start()
+
+        if let hours = autoFrameIORunForHoursValue {
+            autoFrameIOStatusLines.append("Will stop automatically after \(hours) hour(s).")
+            autoFrameIORunForTimer = Timer.scheduledTimer(withTimeInterval: hours * 3600, repeats: false) { _ in
+                DispatchQueue.main.async { deactivateAutoFrameIO() }
+            }
+        }
+    }
+
+    private func deactivateAutoFrameIO() {
+        autoFrameIOWatcher?.stop()
+        autoFrameIOWatcher = nil
+        autoFrameIOSession = nil
+        autoFrameIORunForTimer?.invalidate()
+        autoFrameIORunForTimer = nil
+        autoFrameIOActive = false
+        autoFrameIOStatusLines.append("Stopped.")
     }
 
     private func startEncoding() {
